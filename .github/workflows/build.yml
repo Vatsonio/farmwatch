@@ -28,7 +28,7 @@ jobs:
       - name: Build portable exe
         run: >
           pyinstaller --onefile --console
-          --name bambu-telegram-bot
+          --name farmwatch
           --collect-submodules telegram
           telegram_bot.py
 
@@ -36,19 +36,19 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item dist/bambu-telegram-bot.exe release/
+          Copy-Item dist/farmwatch.exe release/
           Copy-Item config.example.json release/
           Copy-Item README.md release/
-          Compress-Archive -Path release/* -DestinationPath bambu-telegram-bot-windows.zip -Force
+          Compress-Archive -Path release/* -DestinationPath farmwatch-windows.zip -Force
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bambu-telegram-bot-windows
-          path: bambu-telegram-bot-windows.zip
+          name: farmwatch-windows
+          path: farmwatch-windows.zip
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: bambu-telegram-bot-windows.zip
+          files: farmwatch-windows.zip

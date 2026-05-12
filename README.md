@@ -1,4 +1,4 @@
-# Bambu Lab Telegram Bot
+# farmwatch
 
 Telegram-бот для моніторингу ферми 3D-принтерів Bambu Lab.
 
@@ -17,10 +17,10 @@ Chrome DevTools Protocol (CDP/WebSocket), зчитує статус принте
 
 ## Готова збірка (Windows, portable)
 
-У вкладці **Releases** лежить `bambu-telegram-bot-windows.zip` — у ньому
-`bambu-telegram-bot.exe` (Python не потрібен), `config.example.json` і цей README.
+У вкладці **Releases** лежить `farmwatch-windows.zip` — у ньому
+`farmwatch.exe` (Python не потрібен), `config.example.json` і цей README.
 Розпакуйте, скопіюйте `config.example.json` у `config.json`, впишіть токен —
-і запускайте `bambu-telegram-bot.exe`.
+і запускайте `farmwatch.exe`.
 
 Збірку формує GitHub Actions автоматично: на кожен пуш у `main` — як артефакт
 запуску, а на тег `vX.Y.Z` — ще й як файл у Releases.

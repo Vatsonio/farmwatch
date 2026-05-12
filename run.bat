@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ========================================
-echo   Bambu Lab Telegram Bot
+echo   farmwatch - Bambu Lab Telegram Bot
 echo ========================================
 echo.
 
