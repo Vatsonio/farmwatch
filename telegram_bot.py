@@ -4,6 +4,7 @@ Telegram Bot для моніторингу принтерів Bambu Lab
 """
 
 import asyncio
+import html
 import json
 import logging
 from typing import Dict, Optional, List
@@ -21,7 +22,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-from printer_monitor import BambuPrinterMonitor, PrinterStatus
+from printer_monitor import BambuPrinterMonitor, PrinterStatus, BAMBU_EXE_PATH
 
 # Налаштування логування
 logging.basicConfig(
@@ -881,14 +882,14 @@ class BambuTelegramBot:
                     # Обрізаємо назву файлу якщо вона занадто довга
                     max_len = 25
                     if len(printer.current_file) > max_len:
-                        file_name = f" - {printer.current_file[:max_len-7]}..."
+                        file_name = f" - {html.escape(printer.current_file[:max_len-7])}..."
                     else:
-                        file_name = f" - {printer.current_file}"
-                
-                msg += f"{prefix} {status_icon} <b>{printer.name}</b>{file_name}\n"
+                        file_name = f" - {html.escape(printer.current_file)}"
+
+                msg += f"{prefix} {status_icon} <b>{html.escape(printer.name)}</b>{file_name}\n"
                 msg += f"  {progress_bar} <b>{printer.progress}%</b>\n"
                 if printer.remaining_time and printer.status.lower() == 'printing':
-                    msg += f"  ⏱ {printer.remaining_time}\n"
+                    msg += f"  ⏱ {html.escape(str(printer.remaining_time))}\n"
             msg += "\n"
         
         # Завершені принтери
@@ -896,7 +897,7 @@ class BambuTelegramBot:
         if finished:
             msg += "<b>✅ Завершено</b>\n"
             for printer in finished:
-                msg += f"└ {printer.name} • <code>{printer.current_file or 'N/A'}</code>\n"
+                msg += f"└ {html.escape(printer.name)} • <code>{html.escape(printer.current_file or 'N/A')}</code>\n"
             msg += "\n"
         
         # Призупинені принтери
@@ -904,8 +905,11 @@ class BambuTelegramBot:
         if paused:
             msg += "⏸️ На паузі\n"
             for printer in paused:
-                file_display = printer.current_file[:20] + "..." if printer.current_file and len(printer.current_file) > 20 else (printer.current_file or 'N/A')
-                msg += f"└ {printer.name} • <b>{printer.progress}%</b> • {file_display}\n"
+                if printer.current_file and len(printer.current_file) > 20:
+                    file_display = html.escape(printer.current_file[:20]) + "..."
+                else:
+                    file_display = html.escape(printer.current_file or 'N/A')
+                msg += f"└ {html.escape(printer.name)} • <b>{printer.progress}%</b> • {file_display}\n"
             msg += "\n"
         
         # Зупинені принтери
@@ -913,7 +917,7 @@ class BambuTelegramBot:
         if stopped:
             msg += "<b>🛑 Зупинено</b>\n"
             for printer in stopped:
-                msg += f"└ {printer.name} • <b>{printer.progress}%</b>\n"
+                msg += f"└ {html.escape(printer.name)} • <b>{printer.progress}%</b>\n"
             msg += "\n"
         
         # Футер
@@ -957,41 +961,45 @@ class BambuTelegramBot:
         printers_online = [n for n in self.notification_buffer if n['type'] == 'printer_online']
         printers_offline = [n for n in self.notification_buffer if n['type'] == 'printer_offline']
         
-        # Формуємо об'єднане повідомлення
+        # Формуємо об'єднане повідомлення (HTML; динамічний текст екрануємо)
+        def e(value) -> str:
+            return html.escape(str(value)) if value is not None else "N/A"
+
         msg_parts = []
-        
+
         if print_completes:
             if len(print_completes) == 1:
                 n = print_completes[0]
                 msg_parts.append(
-                    f"✅ **ДРУК ЗАВЕРШЕНО**\n\n"
-                    f"Принтер: {n['name']}\n"
-                    f"Файл: {n['file']}\n"
+                    f"✅ <b>ДРУК ЗАВЕРШЕНО</b>\n\n"
+                    f"Принтер: {e(n['name'])}\n"
+                    f"Файл: {e(n['file'])}\n"
                     f"Час: {datetime.now().strftime('%H:%M:%S')}"
                 )
             else:
-                msg = "✅ **ДРУК ЗАВЕРШЕНО** (×{})\n\n".format(len(print_completes))
+                msg = f"✅ <b>ДРУК ЗАВЕРШЕНО</b> (×{len(print_completes)})\n\n"
                 for n in print_completes:
-                    msg += f"• {n['name']} — `{n['file']}`\n"
+                    msg += f"• {e(n['name'])} — <code>{e(n['file'])}</code>\n"
                 msg += f"\nЧас: {datetime.now().strftime('%H:%M:%S')}"
                 msg_parts.append(msg)
-        
+
         if status_changes:
             if len(status_changes) == 1:
                 n = status_changes[0]
+                name = e(n['name'])
                 # Генеруємо красиве повідомлення в залежності від нового статусу
                 status_messages = {
-                    'printing': f"▶️ **ДРУК РОЗПОЧАТО**\n\n🖨️ Принтер **{n['name']}** розпочав друк",
-                    'finished': f"✅ **ДРУК ЗАВЕРШЕНО**\n\n🎉 Принтер **{n['name']}** завершив роботу!",
-                    'stopped': f"🛑 **ДРУК ЗУПИНЕНО**\n\n⚠️ Принтер **{n['name']}** призупинив роботу",
-                    'paused': f"⏸️ **ДРУК НА ПАУЗІ**\n\n⏸️ Принтер **{n['name']}** призупинив друк",
-                    'idle': f"⏸️ **ПРИНТЕР ОЧІКУЄ**\n\n💤 Принтер **{n['name']}** готовий до роботи",
-                    'offline': f"🔴 **ПРИНТЕР ОФЛАЙН**\n\n📡 Принтер **{n['name']}** відключився"
+                    'printing': f"▶️ <b>ДРУК РОЗПОЧАТО</b>\n\n🖨️ Принтер <b>{name}</b> розпочав друк",
+                    'finished': f"✅ <b>ДРУК ЗАВЕРШЕНО</b>\n\n🎉 Принтер <b>{name}</b> завершив роботу!",
+                    'stopped': f"🛑 <b>ДРУК ЗУПИНЕНО</b>\n\n⚠️ Принтер <b>{name}</b> призупинив роботу",
+                    'paused': f"⏸️ <b>ДРУК НА ПАУЗІ</b>\n\n⏸️ Принтер <b>{name}</b> призупинив друк",
+                    'idle': f"⏸️ <b>ПРИНТЕР ОЧІКУЄ</b>\n\n💤 Принтер <b>{name}</b> готовий до роботи",
+                    'offline': f"🔴 <b>ПРИНТЕР ОФЛАЙН</b>\n\n📡 Принтер <b>{name}</b> відключився"
                 }
-                msg = status_messages.get(n['new_status'], 
-                    f"🔄 **ЗМІНА СТАТУСУ**\n\n"
-                    f"🖨️ Принтер **{n['name']}**\n"
-                    f"└ `{n['old_status']}` → `{n['new_status']}`"
+                msg = status_messages.get(n['new_status'],
+                    f"🔄 <b>ЗМІНА СТАТУСУ</b>\n\n"
+                    f"🖨️ Принтер <b>{name}</b>\n"
+                    f"└ <code>{e(n['old_status'])}</code> → <code>{e(n['new_status'])}</code>"
                 )
                 msg_parts.append(msg)
             else:
@@ -1002,39 +1010,39 @@ class BambuTelegramBot:
                     if status not in by_status:
                         by_status[status] = []
                     by_status[status].append(n['name'])
-                
+
                 status_headers = {
-                    'printing': '▶️ **ДРУК РОЗПОЧАТО**',
-                    'finished': '✅ **ДРУК ЗАВЕРШЕНО**',
-                    'stopped': '🛑 **ДРУК ЗУПИНЕНО**',
-                    'paused': '⏸️ **НА ПАУЗІ**',
-                    'idle': '⏸️ **ОЧІКУЮТЬ**',
-                    'offline': '🔴 **ОФЛАЙН**'
+                    'printing': '▶️ <b>ДРУК РОЗПОЧАТО</b>',
+                    'finished': '✅ <b>ДРУК ЗАВЕРШЕНО</b>',
+                    'stopped': '🛑 <b>ДРУК ЗУПИНЕНО</b>',
+                    'paused': '⏸️ <b>НА ПАУЗІ</b>',
+                    'idle': '⏸️ <b>ОЧІКУЮТЬ</b>',
+                    'offline': '🔴 <b>ОФЛАЙН</b>'
                 }
-                
+
                 parts = []
                 for status, names in by_status.items():
-                    header = status_headers.get(status, f'🔄 **{status.upper()}**')
-                    parts.append(f"{header} (×{len(names)})\n" + "\n".join([f"• {name}" for name in names]))
-                
+                    header = status_headers.get(status, f'🔄 <b>{e(status.upper())}</b>')
+                    parts.append(f"{header} (×{len(names)})\n" + "\n".join([f"• {e(name)}" for name in names]))
+
                 msg_parts.append("\n\n━━━━━━━━━━━\n\n".join(parts))
-        
+
         if printers_online:
             if len(printers_online) == 1:
-                msg_parts.append(f"🟢 **ПРИНТЕР ОНЛАЙН**\n\nПринтер {printers_online[0]['name']} підключився")
+                msg_parts.append(f"🟢 <b>ПРИНТЕР ОНЛАЙН</b>\n\nПринтер {e(printers_online[0]['name'])} підключився")
             else:
-                msg = "🟢 **ПРИНТЕРИ ОНЛАЙН** (×{})\n\n".format(len(printers_online))
-                msg += "\n".join([f"• {n['name']}" for n in printers_online])
+                msg = f"🟢 <b>ПРИНТЕРИ ОНЛАЙН</b> (×{len(printers_online)})\n\n"
+                msg += "\n".join([f"• {e(n['name'])}" for n in printers_online])
                 msg_parts.append(msg)
-        
+
         if printers_offline:
             if len(printers_offline) == 1:
-                msg_parts.append(f"🔴 **ПРИНТЕР ОФЛАЙН**\n\nПринтер {printers_offline[0]['name']} відключився")
+                msg_parts.append(f"🔴 <b>ПРИНТЕР ОФЛАЙН</b>\n\nПринтер {e(printers_offline[0]['name'])} відключився")
             else:
-                msg = "🔴 **ПРИНТЕРИ ОФЛАЙН** (×{})\n\n".format(len(printers_offline))
-                msg += "\n".join([f"• {n['name']}" for n in printers_offline])
+                msg = f"🔴 <b>ПРИНТЕРИ ОФЛАЙН</b> (×{len(printers_offline)})\n\n"
+                msg += "\n".join([f"• {e(n['name'])}" for n in printers_offline])
                 msg_parts.append(msg)
-        
+
         # Відправляємо об'єднане повідомлення
         if msg_parts:
             combined_msg = "\n\n━━━━━━━━━━━━━━━━━━━━━\n\n".join(msg_parts)
@@ -1094,11 +1102,11 @@ class BambuTelegramBot:
                 await self.application.bot.send_message(
                     chat_id=user_id,
                     text=message,
-                    parse_mode='Markdown'
+                    parse_mode='HTML'
                 )
             except Exception as e:
                 logger.error(f"Помилка відправки повідомлення користувачу {user_id}: {e}")
-        
+
         # Відправка в групи
         allowed_groups = self.config.get('telegram', {}).get('allowed_groups', [])
         for group_id in allowed_groups:
@@ -1106,7 +1114,7 @@ class BambuTelegramBot:
                 await self.application.bot.send_message(
                     chat_id=group_id,
                     text=message,
-                    parse_mode='Markdown'
+                    parse_mode='HTML'
                 )
             except Exception as e:
                 logger.error(f"Помилка відправки повідомлення в групу {group_id}: {e}")
@@ -1162,12 +1170,12 @@ class BambuTelegramBot:
                     if self.monitor and self.monitor.running:
                         summary = self.monitor.get_summary()
                         msg = (
-                            f"📊 **ПЕРІОДИЧНЕ ОНОВЛЕННЯ**\n\n"
+                            f"📊 <b>ПЕРІОДИЧНЕ ОНОВЛЕННЯ</b>\n\n"
                             f"🖨️ Всього: {summary['total']}\n"
                             f"🟢 Онлайн: {summary['online']}\n"
                             f"▶️ Друкують: {summary['printing']}\n"
-                            f"✅ Завершили друк: `{summary['finished']}`\n"
-                            f"⏸️ На паузі: `{summary.get('paused', 0)}`\n"
+                            f"✅ Завершили друк: {summary['finished']}\n"
+                            f"⏸️ На паузі: {summary.get('paused', 0)}\n"
                             f"💤 Очікують: {summary['idle']}\n"
                             f"🔴 Офлайн: {summary['offline']}"
                         )
@@ -1332,8 +1340,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Імпортуємо шлях до exe
-    from printer_monitor import BAMBU_EXE_PATH
-    
-    # Запуск
     asyncio.run(main())

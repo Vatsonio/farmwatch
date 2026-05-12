@@ -117,13 +117,63 @@ class BambuPrinterMonitor:
         self.on_update_complete: Optional[Callable[[], None]] = None  # Викликається після кожного оновлення
         
     def is_app_running(self) -> bool:
-        """Перевірка чи запущений Bambu Farm Manager"""
+        """Перевірка чи доступний Bambu Farm Manager на debug-порту"""
         try:
             resp = requests.get(f"http://127.0.0.1:{self.debug_port}/json", timeout=2)
             return resp.status_code == 200
-        except:
+        except Exception:
             return False
-    
+
+    def _process_name(self) -> str:
+        """Ім'я виконуваного файлу клієнта (для tasklist/taskkill)"""
+        return os.path.basename(self.exe_path)
+
+    def _is_process_running(self) -> bool:
+        """Чи запущений процес Bambu Farm Manager Client (будь-який інстанс)"""
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {self._process_name()}", "/NH"],
+                capture_output=True, text=True, timeout=10
+            )
+            return self._process_name().lower() in result.stdout.lower()
+        except Exception as e:
+            logger.debug(f"tasklist не вдався: {e}")
+            return False
+
+    def _terminate_running_app(self) -> bool:
+        """Закрити запущений Bambu Farm Manager Client: спершу м'яко, потім примусово"""
+        name = self._process_name()
+
+        logger.info("Закриваю запущений Bambu Farm Manager Client...")
+        try:
+            # без /F — надсилає WM_CLOSE вікнам процесу (звичайне закриття), /T — разом із дочірніми
+            subprocess.run(["taskkill", "/IM", name, "/T"],
+                           capture_output=True, text=True, timeout=10)
+        except Exception as e:
+            logger.debug(f"taskkill (м'яко) не вдався: {e}")
+
+        for _ in range(5):
+            time.sleep(1)
+            if not self._is_process_running():
+                logger.info("✓ Клієнт закрито")
+                return True
+
+        logger.warning("Клієнт не закрився за 5с — примусово (taskkill /F)")
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", name, "/T"],
+                           capture_output=True, text=True, timeout=10)
+        except Exception as e:
+            logger.debug(f"taskkill (примусово) не вдався: {e}")
+
+        for _ in range(5):
+            time.sleep(1)
+            if not self._is_process_running():
+                logger.info("✓ Клієнт закрито (примусово)")
+                return True
+
+        logger.error("❌ Не вдалося закрити Bambu Farm Manager Client")
+        return False
+
     def launch_app(self) -> bool:
         """Запуск Bambu Farm Manager Client"""
         if not os.path.exists(self.exe_path):
@@ -345,7 +395,7 @@ class BambuPrinterMonitor:
                 if 'finished' in status_lower:
                     status = 'finished'
                 elif 'paused' in status_lower or 'pause' in status_lower:
-                    status = 'Paused'
+                    status = 'paused'
                 elif 'stopped' in status_lower or 'stop' in status_lower:
                     status = 'stopped'
                 elif progress > 0:
@@ -525,17 +575,27 @@ class BambuPrinterMonitor:
             logger.warning("Моніторинг вже запущений")
             return False
         
-        # Перевіряємо чи запущений додаток
-        if not self.is_app_running():
+        # Перевіряємо чи доступний клієнт на debug-порту
+        if self.is_app_running():
+            logger.info("✓ Bambu Farm Manager вже запущений з debug-портом")
+        else:
+            # debug-порт не відповідає. Можливо, клієнт запущений у звичайному режимі —
+            # тоді повторний запуск з --remote-debugging-port нічого не дасть (Electron
+            # передасть керування першому інстансу), тому спершу закриваємо існуючий.
             if self.auto_launch:
-                logger.info("Додаток не запущений. Спроба автоматичного запуску...")
+                if self._is_process_running():
+                    logger.info("Клієнт запущений без debug-порту — перезапускаю...")
+                    self._terminate_running_app()
+                    time.sleep(2)
+                logger.info("Запуск Bambu Farm Manager Client з debug-портом...")
                 if not self.launch_app():
                     return False
             else:
-                logger.error("❌ Bambu Farm Manager не запущений. Запустіть його вручну або увімкніть auto_launch=True")
+                logger.error(
+                    "❌ Bambu Farm Manager не доступний на debug-порту. Закрийте клієнт "
+                    "і ввімкніть auto_launch, або запустіть його вручну з --remote-debugging-port."
+                )
                 return False
-        else:
-            logger.info("✓ Bambu Farm Manager вже запущений")
         
         if not self.connect_websocket():
             return False
