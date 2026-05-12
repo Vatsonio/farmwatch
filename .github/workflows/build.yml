@@ -19,6 +19,23 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Determine version
+        id: ver
+        shell: pwsh
+        run: |
+          $codeVer = python -c "import version; print(version.__version__)"
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tagVer = $env:GITHUB_REF.Substring('refs/tags/v'.Length)
+            if ($tagVer -ne $codeVer) {
+              throw "Tag v$tagVer != version.py ($codeVer). Bump version.py before tagging."
+            }
+            $ver = $codeVer
+          } else {
+            $ver = "$codeVer-dev"
+          }
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version: $ver"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -28,30 +45,35 @@ jobs:
       - name: Build portable exe
         run: >
           pyinstaller --onefile --console
-          --name farmwatch
+          --name "farmwatch-${{ steps.ver.outputs.version }}"
           --collect-submodules telegram
           telegram_bot.py
 
       - name: Assemble portable package
+        id: pkg
         shell: pwsh
         run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          $zip = "farmwatch-$ver-windows.zip"
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item dist/farmwatch.exe release/
+          Copy-Item "dist/farmwatch-$ver.exe" release/
           Copy-Item config.example.json release/
           Copy-Item README.md release/
-          Compress-Archive -Path release/* -DestinationPath farmwatch-windows.zip -Force
+          Compress-Archive -Path release/* -DestinationPath $zip -Force
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: farmwatch-windows
-          path: farmwatch-windows.zip
+          name: farmwatch-${{ steps.ver.outputs.version }}
+          path: ${{ steps.pkg.outputs.zip }}
 
       - name: Publish versioned release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: farmwatch-windows.zip
+          name: farmwatch ${{ steps.ver.outputs.version }}
+          files: ${{ steps.pkg.outputs.zip }}
 
       - name: Update rolling "latest" prerelease (on push to main)
         if: github.ref == 'refs/heads/main'
@@ -60,7 +82,7 @@ jobs:
         shell: pwsh
         run: |
           gh release delete latest --yes --cleanup-tag 2>$null
-          gh release create latest farmwatch-windows.zip `
+          gh release create latest "${{ steps.pkg.outputs.zip }}" `
             --prerelease `
-            --title "Latest build (main)" `
-            --notes "Автоматична збірка з гілки main. Коміт: $env:GITHUB_SHA"
+            --title "Latest build - ${{ steps.ver.outputs.version }}" `
+            --notes "Автоматична збірка з гілки main. Версія: ${{ steps.ver.outputs.version }}, коміт: $env:GITHUB_SHA"

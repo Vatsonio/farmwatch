@@ -536,25 +536,27 @@ class BambuPrinterMonitor:
     
     def get_summary(self) -> dict:
         """Отримання загальної статистики"""
-        online = sum(1 for p in self.printers.values() if p.online)
-        printing = sum(1 for p in self.printers.values() if p.status.lower() == 'printing')
-        idle = sum(1 for p in self.printers.values() if p.status.lower() == 'idle' and p.online)
-        finished = sum(1 for p in self.printers.values() if p.status.lower() == 'finished')
-        paused = sum(1 for p in self.printers.values() if p.status.lower() == 'paused')
-        
-        # Debug: логуємо статуси всіх принтерів
-        statuses = [(p.name, p.status) for p in self.printers.values()]
-        logger.info(f"📊 Summary: printing={printing}, paused={paused}, finished={finished}, idle={idle}")
-        logger.info(f"📊 Статуси: {statuses}")
-        
+        # знімок — щоб монітор-потік не змінив dict під час підрахунку
+        printers = list(self.printers.values())
+        online = sum(1 for p in printers if p.online)
+        printing = sum(1 for p in printers if p.status.lower() == 'printing')
+        idle = sum(1 for p in printers if p.status.lower() == 'idle' and p.online)
+        finished = sum(1 for p in printers if p.status.lower() == 'finished')
+        paused = sum(1 for p in printers if p.status.lower() == 'paused')
+
+        logger.debug(
+            "📊 total=%d online=%d printing=%d paused=%d finished=%d idle=%d offline=%d",
+            len(printers), online, printing, paused, finished, idle, len(printers) - online,
+        )
+
         return {
-            'total': len(self.printers),
+            'total': len(printers),
             'online': online,
             'printing': printing,
             'idle': idle,
             'finished': finished,
             'paused': paused,
-            'offline': len(self.printers) - online
+            'offline': len(printers) - online,
         }
     
     def _monitor_loop(self):

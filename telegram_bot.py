@@ -7,9 +7,10 @@ import asyncio
 import html
 import json
 import logging
+import re
 import socket
 from typing import Dict, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -22,8 +23,10 @@ from telegram.ext import (
     filters
 )
 from telegram.request import HTTPXRequest
+from telegram.error import TimedOut, NetworkError, Conflict
 
 from printer_monitor import BambuPrinterMonitor, PrinterStatus, BAMBU_EXE_PATH
+from version import __version__
 
 # Налаштування логування
 logging.basicConfig(
@@ -328,6 +331,8 @@ class BambuTelegramBot:
             "├ /printers — Детальна інформація\n"
             "├ /settings — Налаштування бота\n"
             "├ /restart — Перезапуск моніторингу\n"
+            "├ /id — Дізнатись свій ID\n"
+            "├ /version — Версія бота\n"
             "└ /help — Ця довідка\n\n"
             "**🔔 Сповіщення**\n"
             "Бот автоматично повідомляє про:\n"
@@ -358,8 +363,9 @@ class BambuTelegramBot:
             return
         
         msg = "🔧 DEBUG INFO\n\n"
-        
-        for i, printer in enumerate(printers, 1):
+
+        limit = 10
+        for i, printer in enumerate(printers[:limit], 1):
             msg += f"═══ Принтер {i} ═══\n"
             msg += f"name: '{printer.name}' (type: {type(printer.name).__name__})\n"
             msg += f"model: '{printer.model}' (type: {type(printer.model).__name__})\n"
@@ -372,7 +378,10 @@ class BambuTelegramBot:
             msg += f"bed_temp: '{printer.bed_temp}' (type: {type(printer.bed_temp).__name__})\n"
             msg += f"speed: '{printer.speed}' (type: {type(printer.speed).__name__})\n"
             msg += f"last_update: {printer.last_update}\n\n"
-        
+
+        if len(printers) > limit:
+            msg += f"... та ще {len(printers) - limit} (показано перші {limit})\n\n"
+
         summary = self.monitor.get_summary()
         msg += "═══ Summary ═══\n"
         for key, value in summary.items():
@@ -384,7 +393,25 @@ class BambuTelegramBot:
                 await update.message.reply_text(msg[i:i+4000])
         else:
             await update.message.reply_text(msg)
-    
+
+    async def cmd_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /id — показати свій ID та ID чату (доступна без авторизації)"""
+        user = update.effective_user
+        chat = update.effective_chat
+        lines = ["🪪 <b>Ваші ідентифікатори</b>", ""]
+        if user:
+            uname = f" (@{html.escape(user.username)})" if user.username else ""
+            lines.append(f"👤 User ID: <code>{user.id}</code>{uname}")
+        lines.append(f"💬 Chat ID: <code>{chat.id}</code> ({chat.type})")
+        if chat.type in ("group", "supergroup") and chat.title:
+            lines.append(f"📛 Назва: {html.escape(chat.title)}")
+        lines += ["", "Додайте User ID у config.json → telegram.allowed_users (перший у списку = адмін)."]
+        await update.message.reply_text("\n".join(lines), parse_mode='HTML')
+
+    async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /version — версія бота"""
+        await update.message.reply_text(f"farmwatch v{__version__}")
+
     # === ОБРОБНИКИ CALLBACK ===
     
     async def callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,7 +705,12 @@ class BambuTelegramBot:
             
             # Час
             if printer.remaining_time:
-                msg += f"  ⏱️ Залишилось:  \n{printer.remaining_time}\n\n"
+                rt = str(printer.remaining_time).lstrip('-').strip()
+                eta = self._eta_from_remaining(printer.remaining_time)
+                if eta:
+                    msg += f"  ⏱️ Залишилось:  \n{rt}  (завершення о {self._format_eta(eta)})\n\n"
+                else:
+                    msg += f"  ⏱️ Залишилось:  \n{rt}\n\n"
             
             # Температури
             msg += f"  🌡️ Температури  \n"
@@ -794,7 +826,20 @@ class BambuTelegramBot:
             await self.cmd_settings(update, context)
         elif text == "🔄 Перезапуск":
             await self.cmd_restart(update, context)
-    
+
+    # === ОБРОБНИК ПОМИЛОК ===
+
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
+        """Глобальний обробник помилок PTB — логуємо, не даємо боту впасти"""
+        err = context.error
+        if isinstance(err, (TimedOut, NetworkError, Conflict)):
+            logger.warning(f"Тимчасова помилка Telegram: {type(err).__name__}: {err}")
+        else:
+            logger.error(
+                f"Необроблена помилка при обробці апдейта: {type(err).__name__}: {err}",
+                exc_info=err,
+            )
+
     # === CALLBACK'И ВІД МОНІТОРА ===
     
     async def on_status_change(self, name: str, old: PrinterStatus, new: PrinterStatus):
@@ -890,7 +935,12 @@ class BambuTelegramBot:
                 msg += f"{prefix} {status_icon} <b>{html.escape(printer.name)}</b>{file_name}\n"
                 msg += f"  {progress_bar} <b>{printer.progress}%</b>\n"
                 if printer.remaining_time and printer.status.lower() == 'printing':
-                    msg += f"  ⏱ {html.escape(str(printer.remaining_time))}\n"
+                    rt = html.escape(str(printer.remaining_time).lstrip('-').strip())
+                    eta = self._eta_from_remaining(printer.remaining_time)
+                    if eta:
+                        msg += f"  ⏱ {rt} → <b>{self._format_eta(eta)}</b>\n"
+                    else:
+                        msg += f"  ⏱ {rt}\n"
             msg += "\n"
         
         # Завершені принтери
@@ -931,6 +981,28 @@ class BambuTelegramBot:
         filled = int(length * progress / 100)
         bar = "█" * filled + "░" * (length - filled)
         return f"[{bar}]"
+
+    @staticmethod
+    def _eta_from_remaining(remaining: Optional[str]) -> Optional[datetime]:
+        """'-7h11m' / '45m' / '1h' → час, коли друк завершиться (None, якщо не розпарсити)"""
+        if not remaining:
+            return None
+        d = re.search(r'(\d+)\s*d', remaining)
+        h = re.search(r'(\d+)\s*h', remaining)
+        m = re.search(r'(\d+)\s*m', remaining)
+        days = int(d.group(1)) if d else 0
+        hours = int(h.group(1)) if h else 0
+        minutes = int(m.group(1)) if m else 0
+        if days == 0 and hours == 0 and minutes == 0:
+            return None
+        return datetime.now() + timedelta(days=days, hours=hours, minutes=minutes)
+
+    @staticmethod
+    def _format_eta(eta: datetime) -> str:
+        """Час завершення: тільки годину, якщо сьогодні; інакше з датою"""
+        if eta.date() == datetime.now().date():
+            return eta.strftime('%H:%M')
+        return eta.strftime('%d.%m %H:%M')
     
     def _schedule_callback(self, coro):
         """Безпечне планування async callback з sync потоку"""
@@ -1248,17 +1320,23 @@ class BambuTelegramBot:
             self.application.add_handler(CommandHandler("settings", self.cmd_settings))
             self.application.add_handler(CommandHandler("restart", self.cmd_restart))
             self.application.add_handler(CommandHandler("help", self.cmd_help))
+            self.application.add_handler(CommandHandler("id", self.cmd_id))
+            self.application.add_handler(CommandHandler("version", self.cmd_version))
             self.application.add_handler(CommandHandler("debug", self.cmd_debug))
-            logger.info("   ✓ Зареєстровано 7 команд")
-            
+            logger.info("   ✓ Зареєстровано 9 команд")
+
             # Один головний обробник для всіх callback'ів
             self.application.add_handler(CallbackQueryHandler(self.callback_handler))
             logger.info("   ✓ CallbackQueryHandler зареєстровано")
-            
+
             # MessageHandler для всіх текстових повідомлень (включно з групами)
             self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
             logger.info("   ✓ MessageHandler зареєстровано (обробка всіх текстових повідомлень)")
             logger.info("   ⚠️ УВАГА: В групах потрібно вимкнути Privacy Mode або зробити бота адміном!")
+
+            # Глобальний обробник помилок
+            self.application.add_error_handler(self.error_handler)
+            logger.info("   ✓ Error handler зареєстровано")
             
             # Запуск моніторингу
             logger.info("🚀 Запуск моніторингу принтерів...")
@@ -1289,11 +1367,11 @@ class BambuTelegramBot:
             )
             
             logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            logger.info("✅ БОТ УСПІШНО ЗАПУЩЕНО!")
+            logger.info(f"✅ farmwatch v{__version__} ЗАПУЩЕНО!")
             logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            
+
             # Сповіщення про запуск
-            await self.send_notification("🚀 Бот моніторингу принтерів запущено!")
+            await self.send_notification(f"🚀 farmwatch v{__version__} запущено!")
             
             # Тримаємо бота запущеним
             while True:

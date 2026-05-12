@@ -17,13 +17,13 @@ Chrome DevTools Protocol (CDP/WebSocket), зчитує статус принте
 
 ## Готова збірка (Windows, portable)
 
-У вкладці **Releases** лежить `farmwatch-windows.zip` — у ньому
-`farmwatch.exe` (Python не потрібен), `config.example.json` і цей README.
-Розпакуйте, скопіюйте `config.example.json` у `config.json`, впишіть токен —
-і запускайте `farmwatch.exe`.
+У вкладці **Releases**:
+- `farmwatch X.Y.Z` — релізи на теги `vX.Y.Z`, файл `farmwatch-X.Y.Z-windows.zip`;
+- `latest` — prerelease, що оновлюється на кожен пуш у `main` (`farmwatch-X.Y.Z-dev-windows.zip`).
 
-Збірку формує GitHub Actions автоматично: на кожен пуш у `main` — як артефакт
-запуску, а на тег `vX.Y.Z` — ще й як файл у Releases.
+У zip лежить `farmwatch-X.Y.Z.exe` (Python не потрібен), `config.example.json` і цей README.
+Версія є і в назві exe, і в команді `/version`, і в логах при старті — щоб не плутати збірки.
+Розпакуйте, скопіюйте `config.example.json` у `config.json`, впишіть токен — і запускайте exe.
 
 ## Вимоги (запуск з вихідного коду)
 
@@ -71,6 +71,8 @@ pip install -r requirements.txt
 | `/printers` | Список принтерів і деталі по кожному                |
 | `/settings` | Налаштування бота                                   |
 | `/restart`  | Перезапуск моніторингу                              |
+| `/id`       | Дізнатись свій user/chat ID                          |
+| `/version`  | Версія бота                                          |
 | `/help`     | Довідка                                             |
 
 ## Структура
@@ -81,6 +83,7 @@ pip install -r requirements.txt
 | `printer_monitor.py` | Моніторинг принтерів через CDP/WebSocket, парсинг сторінки дашборда   |
 | `run.bat`            | Скрипт запуску для Windows                                            |
 | `config.example.json`| Шаблон конфігурації                                                   |
+| `version.py`         | Версія проєкту (`__version__`) — оновлюйте перед тегом `vX.Y.Z` (CI звіряє) |
 
 ## Примітки
 
