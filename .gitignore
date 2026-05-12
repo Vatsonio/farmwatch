@@ -1,0 +1,34 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+# Local config (contains the bot token)
+config.json
+
+# Local dashboard snapshot used only for parser development
+bambu_dashboard_full/
+
+# Tooling scratch dir
+.planning/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+Thumbs.db
+.DS_Store

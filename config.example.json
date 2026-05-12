@@ -1,0 +1,29 @@
+{
+  "telegram": {
+    "bot_token": "PUT-YOUR-BOT-TOKEN-HERE",
+    "allowed_users": [],
+    "allowed_groups": [],
+    "proxy": {
+      "enabled": false,
+      "type": "socks5",
+      "host": "127.0.0.1",
+      "port": 1080,
+      "username": "",
+      "password": ""
+    }
+  },
+  "monitor": {
+    "debug_port": 9222,
+    "update_interval": 60,
+    "auto_launch": true,
+    "exe_path": "C:\\Program Files\\Bambu Farm Manager Client\\Bambu Farm Manager Client.exe"
+  },
+  "notifications": {
+    "status_changes": true,
+    "print_complete": true,
+    "printer_offline": true,
+    "printer_online": false,
+    "periodic_updates": false,
+    "periodic_interval": 3600
+  }
+}
