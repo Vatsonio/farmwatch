@@ -7,6 +7,7 @@ import asyncio
 import html
 import json
 import logging
+import socket
 from typing import Dict, Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -1326,10 +1327,39 @@ class BambuTelegramBot:
 
 # === ГОЛОВНА ФУНКЦІЯ ===
 
+# Тримаємо сокет відкритим увесь час життя процесу — він і є "замком"
+_single_instance_sock: Optional[socket.socket] = None
+
+
+def acquire_single_instance_lock(port: int = 48217) -> bool:
+    """Перевірка, що запущений лише один екземпляр бота.
+
+    Telegram дозволяє тільки один активний getUpdates на токен — другий екземпляр
+    отримує Conflict у циклі. Тримаємо TCP-порт на 127.0.0.1: якщо bind не вдався —
+    значить бот уже працює. Сокет звільняється автоматично, коли процес завершується.
+    """
+    global _single_instance_sock
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        sock.close()
+        return False
+    _single_instance_sock = sock
+    return True
+
+
 async def main():
     """Головна функція"""
+    if not acquire_single_instance_lock():
+        logger.error(
+            "❌ Бот уже запущений (інший екземпляр тримає блокування на 127.0.0.1:48217). "
+            "Закрийте попередній процес перед повторним запуском."
+        )
+        return
+
     bot = BambuTelegramBot()
-    
+
     try:
         await bot.start()
     except KeyboardInterrupt:
