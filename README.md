@@ -19,7 +19,8 @@ Chrome DevTools Protocol (CDP/WebSocket), зчитує статус принте
 
 У вкладці **Releases**:
 - `farmwatch X.Y.Z` — релізи на теги `vX.Y.Z`, файл `farmwatch-X.Y.Z-windows.zip`;
-- `latest` — prerelease, що оновлюється на кожен пуш у `main` (`farmwatch-X.Y.Z-dev-windows.zip`).
+- `latest` — prerelease, що оновлюється на кожен пуш у `main`; кожна збірка має
+  унікальну версію `X.Y.Z-dev.<коміт>` (`farmwatch-X.Y.Z-dev.<коміт>-windows.zip`).
 
 У zip лежить `farmwatch-X.Y.Z.exe` (Python не потрібен), `config.example.json` і цей README.
 Версія є і в назві exe, і в команді `/version`, і в логах при старті — щоб не плутати збірки.

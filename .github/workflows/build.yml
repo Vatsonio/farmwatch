@@ -31,10 +31,17 @@ jobs:
             }
             $ver = $codeVer
           } else {
-            $ver = "$codeVer-dev"
+            $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+            $ver = "$codeVer-dev.$shortSha"
           }
           "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Building version: $ver"
+
+      - name: Bake version into build
+        shell: pwsh
+        run: |
+          "__version__ = '${{ steps.ver.outputs.version }}'" | Out-File -FilePath version.py -Encoding utf8
+          Get-Content version.py
 
       - name: Install dependencies
         run: |
