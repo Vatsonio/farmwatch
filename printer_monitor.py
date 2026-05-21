@@ -12,7 +12,7 @@ import subprocess
 import os
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from bs4 import BeautifulSoup
 import logging
 
@@ -104,6 +104,10 @@ class BambuPrinterMonitor:
         self.exe_path = exe_path
         self.auto_launch = auto_launch
         self.printers: Dict[str, PrinterStatus] = {}
+        # name -> (candidate_status, скільки разів поспіль зчитано) — антидребезг статусу
+        self._pending: Dict[str, tuple] = {}
+        # скільки однакових зчитувань поспіль потрібно, щоб прийняти зміну статусу
+        self.status_confirm_polls = 2
         self.running = False
         self.ws_connection: Optional[websocket.WebSocket] = None
         self.monitor_thread: Optional[threading.Thread] = None
@@ -336,15 +340,22 @@ class BambuPrinterMonitor:
             try:
                 # Назва принтера
                 name_elem = card.find('div', class_='monitor_printer-name')
-                name = name_elem.get_text(strip=True) if name_elem else "Unknown"
-                
+                name = name_elem.get_text(strip=True) if name_elem else ""
+                if not name:
+                    logger.debug("Картка принтера без назви — пропускаю (можливо, ще рендериться)")
+                    continue
+
                 # Файл що друкується
                 file_elem = card.find('div', class_='monitor_printing_file')
                 current_file = file_elem.get_text(strip=True) if file_elem else None
-                
+
                 # Статус з прогресом
                 status_elem = card.find('div', class_='monitor_printer-status')
-                status_text = status_elem.get_text(strip=True) if status_elem else "offline"
+                status_text = status_elem.get_text(strip=True) if status_elem else ""
+                if not status_text:
+                    # Картка є, але блок статусу ще не намальований — не вигадуємо offline
+                    logger.debug(f"'{name}': картка без статусу — пропускаю цей цикл")
+                    continue
                 
                 # Парсинг прогресу та часу: "7% -7h6m" або "Paused 45%"
                 progress = 0
@@ -496,32 +507,13 @@ class BambuPrinterMonitor:
                 return False
             
             new_printers = self.parse_printers_from_html(html)
-            
-            # Порівнюємо зі старими даними та викликаємо callbacks
+
+            # Порівнюємо зі старими даними; зміни статусу приймаємо лише після
+            # підтвердження кілька зчитувань поспіль — щоб одноразові "блимання"
+            # дашборда не давали хибних offline/online/finished сповіщень.
             for new_printer in new_printers:
-                old_printer = self.printers.get(new_printer.name)
-                
-                if old_printer:
-                    # Перевірка змін статусу
-                    if old_printer.status != new_printer.status:
-                        if self.on_printer_status_change:
-                            self.on_printer_status_change(new_printer.name, old_printer, new_printer)
-                    
-                    # Перевірка завершення друку
-                    if old_printer.progress > 0 and new_printer.progress == 100:
-                        if self.on_print_complete:
-                            self.on_print_complete(new_printer.name, new_printer)
-                    
-                    # Перевірка online/offline
-                    if not old_printer.online and new_printer.online:
-                        if self.on_printer_online:
-                            self.on_printer_online(new_printer.name, new_printer)
-                    elif old_printer.online and not new_printer.online:
-                        if self.on_printer_offline:
-                            self.on_printer_offline(new_printer.name, new_printer)
-                
-                self.printers[new_printer.name] = new_printer
-            
+                self._apply_printer_update(new_printer)
+
             logger.info(f"✓ Оновлено статус {len(new_printers)} принтерів")
             
             # Викликаємо callback після завершення оновлення
@@ -533,7 +525,73 @@ class BambuPrinterMonitor:
         except Exception as e:
             logger.error(f"Помилка оновлення принтерів: {e}")
             return False
-    
+
+    def _apply_printer_update(self, new_printer: PrinterStatus):
+        """Прийняти оновлення одного принтера з антидребезгом статусу.
+
+        Зміну статусу приймаємо (і шлемо сповіщення) лише після того, як вона
+        підтвердилась status_confirm_polls зчитувань поспіль. Доти "м'які" поля
+        (прогрес, температури) оновлюються, а статус лишається попередній.
+        """
+        name = new_printer.name
+        old = self.printers.get(name)
+
+        # Перша поява принтера — приймаємо одразу, без сповіщень
+        if old is None:
+            self.printers[name] = new_printer
+            self._pending.pop(name, None)
+            return
+
+        def _check_print_complete(prev: PrinterStatus, cur: PrinterStatus):
+            # Завершення друку — лише по переходу прогресу в 100 і коли статус
+            # не став 'finished' (щоб не дублювати сповіщення про зміну статусу)
+            if (0 < prev.progress < 100 and cur.progress == 100
+                    and cur.status.lower() != 'finished'
+                    and self.on_print_complete):
+                self.on_print_complete(name, cur)
+
+        # Статус не змінився — оновлюємо дані, скидаємо лічильник підтверджень
+        if old.status == new_printer.status:
+            _check_print_complete(old, new_printer)
+            self.printers[name] = new_printer
+            self._pending.pop(name, None)
+            return
+
+        # Статус відрізняється — кандидат на зміну, рахуємо підтвердження
+        pending = self._pending.get(name)
+        if pending and pending[0] == new_printer.status:
+            count = pending[1] + 1
+        else:
+            count = 1
+        self._pending[name] = (new_printer.status, count)
+
+        if count < self.status_confirm_polls:
+            # Ще не підтверджено — оновлюємо лише "м'які" поля, статус лишаємо старий
+            self.printers[name] = replace(
+                new_printer, status=old.status, online=old.online
+            )
+            logger.debug(
+                f"{name}: '{old.status}' → '{new_printer.status}'? "
+                f"очікую підтвердження ({count}/{self.status_confirm_polls})"
+            )
+            return
+
+        # Підтверджено N разів поспіль — приймаємо зміну і шлемо сповіщення
+        self._pending.pop(name, None)
+        logger.info(f"{name}: статус '{old.status}' → '{new_printer.status}'")
+
+        if self.on_printer_status_change:
+            self.on_printer_status_change(name, old, new_printer)
+        _check_print_complete(old, new_printer)
+        if not old.online and new_printer.online:
+            if self.on_printer_online:
+                self.on_printer_online(name, new_printer)
+        elif old.online and not new_printer.online:
+            if self.on_printer_offline:
+                self.on_printer_offline(name, new_printer)
+
+        self.printers[name] = new_printer
+
     def get_summary(self) -> dict:
         """Отримання загальної статистики"""
         # знімок — щоб монітор-потік не змінив dict під час підрахунку

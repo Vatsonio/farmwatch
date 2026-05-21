@@ -405,7 +405,7 @@ class BambuTelegramBot:
         lines.append(f"💬 Chat ID: <code>{chat.id}</code> ({chat.type})")
         if chat.type in ("group", "supergroup") and chat.title:
             lines.append(f"📛 Назва: {html.escape(chat.title)}")
-        lines += ["", "Додайте User ID у config.json → telegram.allowed_users (перший у списку = адмін)."]
+        lines += ["", "Додайте User ID у config.json → telegram.allowed_users"]
         await update.message.reply_text("\n".join(lines), parse_mode='HTML')
 
     async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
