@@ -7,5 +7,5 @@
 CI рахує MINOR під час збірки і запікає сюди __version__ = MAJOR.<commit-count>.
 Щоб підняти MAJOR — зміни число нижче вручну в окремому коміті.
 """
-MAJOR = 1
-__version__ = "1.11"
+MAJOR = 2
+__version__ = "2.15"
