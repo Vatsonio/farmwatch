@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>farmwatch · settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#panels">Skip to settings</a>
+
+  <header class="command-bar">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">FARMWATCH</span>
+      <span class="brand__sub">CONTROL</span>
+    </div>
+    <div class="command-bar__spacer"></div>
+    <span class="ver-chip" id="ver">v0.0</span>
+    <span class="status-pill"><span class="led off" id="bot-led"></span><span class="t-label" id="bot-label">BOT</span></span>
+    <span class="clock" id="clock">00:00:00</span>
+  </header>
+
+  <section class="strip" aria-label="Program status">
+    <div class="stat"><span class="stat__label">Version</span><span class="stat__val num" id="s-version">.</span></div>
+    <div class="stat"><span class="stat__label">Bot</span><span class="stat__val" id="s-bot">.</span></div>
+    <div class="stat"><span class="stat__label">Token</span><span class="stat__val" id="s-token">.</span></div>
+    <div class="stat"><span class="stat__label">Users</span><span class="stat__val num" id="s-users">0</span></div>
+    <div class="stat"><span class="stat__label">Groups</span><span class="stat__val num" id="s-groups">0</span></div>
+    <div class="stat"><span class="stat__label">Debug log</span><span class="stat__val" id="s-debug">.</span></div>
+    <div class="stat"><span class="stat__label">Dumps</span><span class="stat__val num" id="s-dumps">0</span></div>
+  </section>
+
+  <main class="layout" id="panels">
+
+    <!-- TELEGRAM -->
+    <section class="panel">
+      <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Telegram</span></div>
+
+      <div class="field field--stack">
+        <span class="field__label">Bot token <small>from @BotFather</small></span>
+        <div class="field__control">
+          <input type="password" id="bot_token" data-path="telegram.bot_token" placeholder="123456:ABC..." autocomplete="off" spellcheck="false">
+          <button class="reveal-btn" id="token-reveal" type="button" aria-label="Reveal token">show</button>
+        </div>
+      </div>
+
+      <div class="field field--stack">
+        <span class="field__label">Allowed users <small>numeric user ids, first is admin</small></span>
+        <div class="field__control" style="flex-direction:column;align-items:stretch">
+          <div class="chips" data-chips="telegram.allowed_users"></div>
+          <div class="chip-add">
+            <input type="number" class="mono" data-chip-input="telegram.allowed_users" placeholder="add user id">
+            <button class="btn-mini" type="button" data-chip-add="telegram.allowed_users">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field field--stack">
+        <span class="field__label">Allowed groups <small>negative chat ids</small></span>
+        <div class="field__control" style="flex-direction:column;align-items:stretch">
+          <div class="chips" data-chips="telegram.allowed_groups"></div>
+          <div class="chip-add">
+            <input type="number" class="mono" data-chip-input="telegram.allowed_groups" placeholder="add group id">
+            <button class="btn-mini" type="button" data-chip-add="telegram.allowed_groups">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="subhead">Proxy</div>
+      <div class="field toggle-row">
+        <span class="field__label">Enabled</span>
+        <div class="field__control" style="justify-content:flex-end">
+          <button class="toggle" role="switch" data-path="telegram.proxy.enabled" aria-checked="false"></button>
+        </div>
+      </div>
+      <div class="field"><span class="field__label">Type</span><div class="field__control">
+        <select data-path="telegram.proxy.type"><option value="socks5">socks5</option><option value="http">http</option></select></div></div>
+      <div class="field"><span class="field__label">Host</span><div class="field__control">
+        <input type="text" class="mono" data-path="telegram.proxy.host" placeholder="127.0.0.1"></div></div>
+      <div class="field"><span class="field__label">Port</span><div class="field__control">
+        <input type="number" class="mono input-narrow" data-path="telegram.proxy.port" placeholder="1080"></div></div>
+      <div class="field"><span class="field__label">Username</span><div class="field__control">
+        <input type="text" data-path="telegram.proxy.username" autocomplete="off"></div></div>
+      <div class="field"><span class="field__label">Password</span><div class="field__control">
+        <input type="password" data-path="telegram.proxy.password" autocomplete="off"></div></div>
+    </section>
+
+    <!-- MONITOR -->
+    <section class="panel">
+      <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Monitor</span></div>
+
+      <div class="field"><span class="field__label">Debug port <small>Chrome DevTools</small></span><div class="field__control">
+        <input type="number" class="mono input-narrow" data-path="monitor.debug_port" placeholder="9222"></div></div>
+      <div class="field"><span class="field__label">Update interval <small>seconds</small></span><div class="field__control">
+        <input type="number" class="mono input-narrow" data-path="monitor.update_interval" placeholder="60"></div></div>
+      <div class="field toggle-row"><span class="field__label">Auto launch client</span><div class="field__control" style="justify-content:flex-end">
+        <button class="toggle" role="switch" data-path="monitor.auto_launch" aria-checked="false"></button></div></div>
+      <div class="field field--stack"><span class="field__label">Client exe path</span><div class="field__control">
+        <input type="text" class="mono" data-path="monitor.exe_path" placeholder="C:\\Program Files\\Bambu Farm Manager Client\\..."></div></div>
+      <div class="field toggle-row"><span class="field__label">Debug logging <small>captures printer disappearance</small></span><div class="field__control" style="justify-content:flex-end">
+        <button class="toggle" role="switch" data-path="monitor.debug_logging" aria-checked="false"></button></div></div>
+    </section>
+
+    <!-- NOTIFICATIONS -->
+    <section class="panel">
+      <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Notifications</span></div>
+      <div class="field toggle-row"><span class="field__label">Status changes</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.status_changes" aria-checked="false"></button></div></div>
+      <div class="field toggle-row"><span class="field__label">Print complete</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.print_complete" aria-checked="false"></button></div></div>
+      <div class="field toggle-row"><span class="field__label">Printer online</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.printer_online" aria-checked="false"></button></div></div>
+      <div class="field toggle-row"><span class="field__label">Printer offline</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.printer_offline" aria-checked="false"></button></div></div>
+      <div class="field toggle-row"><span class="field__label">Periodic updates</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.periodic_updates" aria-checked="false"></button></div></div>
+      <div class="field"><span class="field__label">Periodic interval <small>seconds</small></span><div class="field__control"><input type="number" class="mono input-narrow" data-path="notifications.periodic_interval" placeholder="3600"></div></div>
+    </section>
+
+    <!-- DIAGNOSTICS -->
+    <section class="panel panel--wide">
+      <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Diagnostics</span>
+        <span class="panel__hint">printer disappearance signals from the monitor log</span></div>
+      <div class="diag-list" id="diag-list"><div class="diag-empty">Loading...</div></div>
+
+      <div class="subhead">Logs</div>
+      <div class="log-toolbar">
+        <select id="log-name" class="input-narrow"><option value="monitor">printer_monitor</option><option value="bot">telegram_bot</option><option value="debug">monitor debug</option></select>
+        <button class="btn-mini" id="log-refresh" type="button">Refresh</button>
+        <span class="panel__hint" id="log-meta"></span>
+      </div>
+      <pre class="log-view" id="log-view">.</pre>
+    </section>
+
+  </main>
+
+  <div class="saved-flash" id="flash">Saved</div>
+  <div class="savebar" id="savebar">
+    <span class="savebar__msg"><b>Unsaved changes</b> in config.json</span>
+    <span class="savebar__spacer"></span>
+    <button class="btn" id="revert" type="button">Revert</button>
+    <button class="btn btn--primary" id="save" type="button">Save changes</button>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
