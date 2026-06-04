@@ -412,6 +412,40 @@ class BambuTelegramBot:
         """Команда /version — версія бота"""
         await update.message.reply_text(f"farmwatch v{__version__}")
 
+    async def cmd_debuglog(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /debuglog [on|off] — перемкнути детальне логування монітора.
+
+        Без аргументу — перемикає поточний стан. Лог пишеться у printer_monitor.debug.log,
+        а сирий HTML дашборда при зникненні принтерів — у debug_dumps/.
+        """
+        if not await self.check_authorization(update, context):
+            return
+        if not self.is_admin(update.effective_user.id):
+            await update.message.reply_text("❌ Лише адмін може керувати логуванням")
+            return
+
+        arg = (context.args[0].lower() if context.args else "")
+        if arg in ("on", "1", "true", "увімк", "вкл"):
+            new_state = True
+        elif arg in ("off", "0", "false", "вимк", "выкл"):
+            new_state = False
+        else:
+            new_state = not self.config.get('monitor', {}).get('debug_logging', False)
+
+        self.config.setdefault('monitor', {})['debug_logging'] = new_state
+        self.save_config()
+        if self.monitor:
+            self.monitor.set_debug_logging(new_state)
+
+        await update.message.reply_text(
+            f"🔧 Детальне логування монітора: {'УВІМКНЕНО ✅' if new_state else 'вимкнено ❌'}\n\n"
+            f"📄 Лог: <code>printer_monitor.debug.log</code>\n"
+            f"💾 HTML-дампи при зникненні: <code>debug_dumps/</code>\n\n"
+            f"Зникнення принтерів фіксується у логах <b>завжди</b> (рядки «⚠️ ПРИНТЕРИ ЗНИКЛИ»); "
+            f"debug-режим додає сирий HTML для розбору.",
+            parse_mode='HTML'
+        )
+
     # === ОБРОБНИКИ CALLBACK ===
     
     async def callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1203,7 +1237,9 @@ class BambuTelegramBot:
                 debug_port=monitor_config.get('debug_port', 9222),
                 update_interval=monitor_config.get('update_interval', 30),
                 exe_path=monitor_config.get('exe_path', BAMBU_EXE_PATH),
-                auto_launch=monitor_config.get('auto_launch', True)
+                auto_launch=monitor_config.get('auto_launch', True),
+                debug_logging=monitor_config.get('debug_logging', False),
+                debug_dump_dir=monitor_config.get('debug_dump_dir', 'debug_dumps')
             )
             
             # Встановлення callback'ів
@@ -1323,7 +1359,8 @@ class BambuTelegramBot:
             self.application.add_handler(CommandHandler("id", self.cmd_id))
             self.application.add_handler(CommandHandler("version", self.cmd_version))
             self.application.add_handler(CommandHandler("debug", self.cmd_debug))
-            logger.info("   ✓ Зареєстровано 9 команд")
+            self.application.add_handler(CommandHandler("debuglog", self.cmd_debuglog))
+            logger.info("   ✓ Зареєстровано 10 команд")
 
             # Один головний обробник для всіх callback'ів
             self.application.add_handler(CallbackQueryHandler(self.callback_handler))

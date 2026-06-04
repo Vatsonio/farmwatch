@@ -10,6 +10,7 @@ import time
 import threading
 import subprocess
 import os
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, asdict, replace
@@ -90,24 +91,35 @@ class PrinterStatus:
 class BambuPrinterMonitor:
     """Монітор принтерів Bambu Lab"""
     
-    def __init__(self, debug_port: int = 9222, update_interval: int = 10, 
-                 exe_path: str = BAMBU_EXE_PATH, auto_launch: bool = True):
+    def __init__(self, debug_port: int = 9222, update_interval: int = 10,
+                 exe_path: str = BAMBU_EXE_PATH, auto_launch: bool = True,
+                 debug_logging: bool = False, debug_dump_dir: str = "debug_dumps"):
         """
         Args:
             debug_port: Порт Chrome DevTools
             update_interval: Інтервал оновлення у секундах
             exe_path: Шлях до Bambu Farm Manager Client.exe
             auto_launch: Автоматично запускати додаток якщо він не запущений
+            debug_logging: Детальне логування (зокрема діагностика зникнення принтерів)
+            debug_dump_dir: Куди зберігати сирий HTML дашборда при аномаліях
         """
         self.debug_port = debug_port
         self.update_interval = update_interval
         self.exe_path = exe_path
         self.auto_launch = auto_launch
+        self.debug_logging = debug_logging
+        self.debug_dump_dir = debug_dump_dir
         self.printers: Dict[str, PrinterStatus] = {}
         # name -> (candidate_status, скільки разів поспіль зчитано) — антидребезг статусу
         self._pending: Dict[str, tuple] = {}
         # скільки однакових зчитувань поспіль потрібно, щоб прийняти зміну статусу
         self.status_confirm_polls = 2
+        # --- діагностика зникнення принтерів ---
+        self._last_seen_names: set = set()           # назви, видимі у попередньому scrape
+        self._last_card_count: Optional[int] = None  # скільки карток було минулого циклу
+        self._last_parse_stats: dict = {}            # статистика останнього парсингу
+        self._cycle_seq = 0                          # лічильник циклів оновлення
+        self._debug_handler = None                   # окремий file-handler для debug
         self.running = False
         self.ws_connection: Optional[websocket.WebSocket] = None
         self.monitor_thread: Optional[threading.Thread] = None
@@ -119,7 +131,10 @@ class BambuPrinterMonitor:
         self.on_printer_online: Optional[Callable[[str, PrinterStatus], None]] = None
         self.on_printer_offline: Optional[Callable[[str, PrinterStatus], None]] = None
         self.on_update_complete: Optional[Callable[[], None]] = None  # Викликається після кожного оновлення
-        
+
+        # Налаштувати детальне логування, якщо увімкнено через конфіг
+        self._configure_debug_logging()
+
     def is_app_running(self) -> bool:
         """Перевірка чи доступний Bambu Farm Manager на debug-порту"""
         try:
@@ -322,10 +337,20 @@ class BambuPrinterMonitor:
         """Парсинг принтерів з HTML"""
         soup = BeautifulSoup(html, 'html.parser')
         printers = []
-        
+
         # Знаходимо всі картки принтерів
         printer_cards = soup.find_all('div', class_='monitor_printer')
-        
+
+        # Статистика парсингу — основа діагностики зникнення принтерів
+        stats = {
+            'cards_found': len(printer_cards),
+            'parsed_ok': 0,
+            'skipped_no_name': 0,
+            'skipped_no_status': 0,
+            'parse_errors': 0,
+            'skipped_names': [],
+        }
+
         if not printer_cards:
             logger.warning(f"Не знайдено карток принтерів. HTML довжина: {len(html)} символів")
             # Debug: виводимо які класи є
@@ -342,6 +367,7 @@ class BambuPrinterMonitor:
                 name_elem = card.find('div', class_='monitor_printer-name')
                 name = name_elem.get_text(strip=True) if name_elem else ""
                 if not name:
+                    stats['skipped_no_name'] += 1
                     logger.debug("Картка принтера без назви — пропускаю (можливо, ще рендериться)")
                     continue
 
@@ -354,6 +380,8 @@ class BambuPrinterMonitor:
                 status_text = status_elem.get_text(strip=True) if status_elem else ""
                 if not status_text:
                     # Картка є, але блок статусу ще не намальований — не вигадуємо offline
+                    stats['skipped_no_status'] += 1
+                    stats['skipped_names'].append(name)
                     logger.debug(f"'{name}': картка без статусу — пропускаю цей цикл")
                     continue
                 
@@ -440,11 +468,19 @@ class BambuPrinterMonitor:
                 )
                 
                 printers.append(printer)
-                
+                stats['parsed_ok'] += 1
+                if self.debug_logging:
+                    logger.debug(
+                        f"   ✓ картка: '{name}' status={status} progress={progress} "
+                        f"online={online} file={current_file!r}"
+                    )
+
             except Exception as e:
+                stats['parse_errors'] += 1
                 logger.error(f"Помилка парсингу принтера: {e}")
                 continue
-        
+
+        self._last_parse_stats = stats
         return printers
     
     def update_printers(self) -> bool:
@@ -507,6 +543,13 @@ class BambuPrinterMonitor:
                 return False
             
             new_printers = self.parse_printers_from_html(html)
+
+            # Діагностика зникнення принтерів (до застосування оновлень).
+            # Ніколи не має ламати моніторинг — тому в try.
+            try:
+                self._diagnose_cycle(new_printers, html)
+            except Exception as e:
+                logger.error(f"Помилка діагностики циклу: {e}")
 
             # Порівнюємо зі старими даними; зміни статусу приймаємо лише після
             # підтвердження кілька зчитувань поспіль — щоб одноразові "блимання"
@@ -591,6 +634,113 @@ class BambuPrinterMonitor:
                 self.on_printer_offline(name, new_printer)
 
         self.printers[name] = new_printer
+
+    # === ДІАГНОСТИКА ЗНИКНЕННЯ ПРИНТЕРІВ ===
+
+    def _configure_debug_logging(self):
+        """Увімкнути/вимкнути детальне логування монітора (окремий debug-лог)."""
+        if self.debug_logging:
+            logger.setLevel(logging.DEBUG)
+            if self._debug_handler is None:
+                try:
+                    h = logging.FileHandler('printer_monitor.debug.log', encoding='utf-8')
+                    h.setLevel(logging.DEBUG)
+                    h.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+                    logger.addHandler(h)
+                    self._debug_handler = h
+                    logger.info("🔧 Окремий debug-лог: printer_monitor.debug.log")
+                except Exception as e:
+                    logger.error(f"Не вдалося створити debug-лог: {e}")
+        else:
+            logger.setLevel(logging.INFO)
+
+    def set_debug_logging(self, enabled: bool):
+        """Перемкнути детальне логування під час роботи (виклик із бота)."""
+        self.debug_logging = enabled
+        self._configure_debug_logging()
+        logger.info(
+            f"🔧 Детальне логування монітора: {'УВІМКНЕНО' if enabled else 'вимкнено'}"
+        )
+
+    def _dump_html(self, html: str, reason: str):
+        """Зберегти сирий HTML дашборда для подальшого аналізу аномалії."""
+        try:
+            d = Path(self.debug_dump_dir)
+            d.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            path = d / f"dashboard_{ts}_{reason}.html"
+            path.write_text(html or "", encoding='utf-8')
+            logger.warning(f"💾 HTML дашборда збережено: {path} ({len(html or '')} байт)")
+        except Exception as e:
+            logger.error(f"Не вдалося зберегти HTML-дамп: {e}")
+
+    def _diagnose_cycle(self, new_printers: List[PrinterStatus], html: str):
+        """Порівняти поточний scrape із попереднім і зафіксувати зникнення принтерів.
+
+        Дешево й працює завжди. Якщо принтер був видимий минулого циклу, а зараз
+        його нема у scrape — це і є "зникнення". При debug_logging додатково
+        зберігається сирий HTML для forensics.
+        """
+        self._cycle_seq += 1
+        new_names = {p.name for p in new_printers}
+        known_names = set(self.printers.keys())
+        stats = self._last_parse_stats or {}
+        card_count = stats.get('cards_found', len(new_printers))
+
+        vanished = self._last_seen_names - new_names   # було минулого циклу, зникло зараз
+        appeared = new_names - self._last_seen_names    # нові у цьому циклі
+
+        logger.info(
+            "🔎 цикл #%d: карток=%d, розпарсено=%d, scrape=%d, у пам'яті=%d",
+            self._cycle_seq, card_count, stats.get('parsed_ok', len(new_printers)),
+            len(new_names), len(known_names),
+        )
+
+        skipped_total = (stats.get('skipped_no_name', 0)
+                         + stats.get('skipped_no_status', 0)
+                         + stats.get('parse_errors', 0))
+        if skipped_total:
+            logger.warning(
+                "   ⚠️ пропущено карток: без_назви=%d, без_статусу=%d (%s), помилок=%d",
+                stats.get('skipped_no_name', 0),
+                stats.get('skipped_no_status', 0),
+                ", ".join(stats.get('skipped_names', [])) or "-",
+                stats.get('parse_errors', 0),
+            )
+
+        anomaly = False
+
+        if vanished:
+            anomaly = True
+            logger.warning(
+                "⚠️ ПРИНТЕРИ ЗНИКЛИ з дашборда (%d): %s | минулий цикл=%d, зараз=%d",
+                len(vanished), ", ".join(sorted(vanished)),
+                len(self._last_seen_names), len(new_names),
+            )
+
+        if appeared and self._last_seen_names:
+            logger.info("➕ зʼявились (%d): %s", len(appeared), ", ".join(sorted(appeared)))
+
+        if self._last_card_count is not None and card_count < self._last_card_count:
+            anomaly = True
+            logger.warning("⚠️ кількість карток впала: %d → %d",
+                           self._last_card_count, card_count)
+
+        if card_count == 0:
+            anomaly = True
+            logger.warning("⚠️ scrape повернув 0 карток (html=%d байт)", len(html or ""))
+
+        # принтери, що лишилися в пам'яті, але зникли зі scrape (показуються stale)
+        stale = known_names - new_names
+        if stale and self.debug_logging:
+            logger.debug("   у пам'яті, але не у scrape (%d): %s",
+                         len(stale), ", ".join(sorted(stale)))
+
+        if anomaly and self.debug_logging:
+            self._dump_html(html, reason=f"cycle{self._cycle_seq}_cards{card_count}")
+
+        self._last_seen_names = new_names
+        self._last_card_count = card_count
 
     def get_summary(self) -> dict:
         """Отримання загальної статистики"""
