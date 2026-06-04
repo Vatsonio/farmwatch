@@ -87,7 +87,7 @@ jobs:
           $notes   = $subject
           if ($body -and $body.Trim()) { $notes = "$subject`n`n$body" }
           $sha7 = $env:GITHUB_SHA.Substring(0, 7)
-          $notes = "$notes`n`n---`nВерсія $ver · коміт $sha7"
+          $notes = "$notes`n`nВерсія $ver · коміт $sha7"
           Set-Content -Path release_notes.md -Value $notes -Encoding utf8
 
           # Кожен коміт -> власний реліз v<ver>, попередні лишаються. Найновіший = latest.
