@@ -136,13 +136,15 @@
     <!-- DIAGNOSTICS -->
     <section class="panel panel--wide">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Diagnostics</span>
-        <span class="panel__hint">printer disappearance signals from the monitor log</span></div>
+        <span class="panel__hint" style="margin-left:auto">disappearance signals from the monitor log</span>
+        <button class="btn-mini" id="diag-copy" type="button" style="margin-left:8px">Copy</button></div>
       <div class="diag-list" id="diag-list"><div class="diag-empty">Loading...</div></div>
 
       <div class="subhead">Logs</div>
       <div class="log-toolbar">
         <select id="log-name" class="input-narrow"><option value="monitor">printer_monitor</option><option value="bot">telegram_bot</option><option value="debug">monitor debug</option></select>
         <button class="btn-mini" id="log-refresh" type="button">Refresh</button>
+        <button class="btn-mini" id="log-copy" type="button">Copy</button>
         <span class="panel__hint" id="log-meta"></span>
       </div>
       <pre class="log-view" id="log-view">.</pre>

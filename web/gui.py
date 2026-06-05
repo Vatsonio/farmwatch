@@ -12,7 +12,7 @@ Run:
     python -m web.gui
 """
 
-import json
+import os
 import socket
 import threading
 import time
@@ -85,10 +85,13 @@ def main():
         background_color=WINDOW_BG, hidden=True,
     )
 
+    state = {"quitting": False}
+
     def on_open(icon=None, item=None):
         window.show()
 
     def on_quit(icon, item):
+        state["quitting"] = True
         try:
             if app.state.monitor:
                 app.state.monitor.stop()
@@ -98,10 +101,15 @@ def main():
             icon.stop()
         except Exception:
             pass
-        window.destroy()
+        try:
+            window.destroy()
+        except Exception:
+            pass
 
     def on_closing():
-        # The X hides to the tray instead of quitting the app.
+        # The X hides to the tray; only a real Quit is allowed to close the window.
+        if state["quitting"]:
+            return True
         window.hide()
         return False
 
@@ -121,6 +129,9 @@ def main():
         threading.Thread(target=run_tray, daemon=True).start()
 
     webview.start(on_started)
+    # webview.start returns once the window is destroyed (Quit). Force a full process
+    # exit so no lingering thread keeps the app (or the tray icon) alive.
+    os._exit(0)
 
 
 if __name__ == "__main__":

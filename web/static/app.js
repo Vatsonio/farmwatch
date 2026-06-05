@@ -185,6 +185,28 @@
     } catch (e) { /* keep last */ }
   }
 
+  /* ---- copy to clipboard ---- */
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(t).catch(() => fallbackCopy(t));
+    }
+    return Promise.resolve(fallbackCopy(t));
+  }
+  function fallbackCopy(t) {
+    const ta = document.createElement("textarea");
+    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+    document.body.removeChild(ta);
+  }
+  function copyBtn(btn, text) {
+    copyText(text || "");
+    const old = btn.textContent;
+    btn.textContent = "Copied";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = old; btn.classList.remove("copied"); }, 1200);
+  }
+
   /* ---- save / revert ---- */
   async function save() {
     const btn = $("#save");
@@ -251,6 +273,8 @@
     $("#revert").onclick = revert;
     $("#log-refresh").onclick = loadLog;
     $("#log-name").onchange = loadLog;
+    $("#diag-copy").onclick = () => copyBtn($("#diag-copy"), $("#diag-list").innerText);
+    $("#log-copy").onclick = () => copyBtn($("#log-copy"), $("#log-view").innerText);
     window.addEventListener("beforeunload", (e) => {
       if (JSON.stringify(cfg) !== original) { e.preventDefault(); e.returnValue = ""; }
     });
