@@ -12,6 +12,7 @@ import json
 import logging
 import shutil
 import socket
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -19,13 +20,22 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+import appconfig
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger("web")
 
-ROOT = Path(__file__).resolve().parent.parent
-STATIC = Path(__file__).parent / "static"
-CONFIG = ROOT / "config.json"
-EXAMPLE = ROOT / "config.example.json"
+
+def _static_dir() -> Path:
+    # PyInstaller bundles web/static into _MEIPASS via --add-data.
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", ".")) / "web" / "static"
+    return Path(__file__).parent / "static"
+
+
+ROOT = appconfig.base_dir()          # logs, dumps and config live next to the exe
+STATIC = _static_dir()
+CONFIG = appconfig.config_path()
 BOT_LOCK_PORT = 48217  # the single instance port telegram_bot.py binds while running
 
 LOG_FILES = {
@@ -36,17 +46,13 @@ LOG_FILES = {
 
 app = FastAPI(title="farmwatch settings")
 app.state.monitor = None  # the tray app (web.gui) sets this for live farm metrics
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
 # ----------------------------- config io -----------------------------
 def load_config() -> dict:
-    path = CONFIG if CONFIG.exists() else EXAMPLE
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        log.error("could not read %s: %s", path, e)
-        return {}
+    """Ensure config.json exists next to the exe, then load it."""
+    return appconfig.load_config()
 
 
 def _as_int_list(v):
@@ -137,7 +143,6 @@ async def api_get_config():
     return JSONResponse({
         "config": load_config(),
         "exists": CONFIG.exists(),
-        "exe_default": str(EXAMPLE.exists()),
     })
 
 

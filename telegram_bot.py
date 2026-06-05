@@ -27,6 +27,7 @@ from telegram.error import TimedOut, NetworkError, Conflict
 
 from printer_monitor import BambuPrinterMonitor, PrinterStatus, BAMBU_EXE_PATH
 from version import __version__
+import appconfig
 
 # Налаштування логування
 logging.basicConfig(
@@ -47,12 +48,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 class BambuTelegramBot:
     """Telegram бот для управління моніторингом принтерів"""
     
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path: Optional[str] = None):
         """
         Args:
-            config_path: Шлях до файлу конфігурації
+            config_path: Шлях до config.json (типово поруч з exe / у поточній папці)
         """
-        self.config_path = Path(config_path)
+        self.config_path = Path(config_path) if config_path else appconfig.config_path()
         self.config = self.load_config()
         self.monitor: Optional[BambuPrinterMonitor] = None
         self.application: Optional[Application] = None
@@ -66,14 +67,21 @@ class BambuTelegramBot:
         self.notification_batch_delay: float = 2.0  # Затримка в секундах для батчингу
         
     def load_config(self) -> dict:
-        """Завантаження конфігурації"""
+        """Завантаження конфігурації. Якщо файлу нема — створюємо дефолтний поруч."""
         if not self.config_path.exists():
-            logger.error(f"❌ Файл конфігурації не знайдено: {self.config_path}")
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
-        
-        with open(self.config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
+            logger.warning(f"config.json не знайдено, створюю дефолтний: {self.config_path}")
+            try:
+                self.config_path.write_text(
+                    json.dumps(appconfig.DEFAULT_CONFIG, indent=2, ensure_ascii=False),
+                    encoding='utf-8')
+            except Exception as e:
+                logger.error(f"Не вдалося створити config.json: {e}")
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        except Exception as e:
+            logger.error(f"Не вдалося прочитати config.json ({e}); беру дефолт")
+            config = dict(appconfig.DEFAULT_CONFIG)
         logger.info("✓ Конфігурацію завантажено")
         return config
     
@@ -1341,8 +1349,10 @@ class BambuTelegramBot:
             self.event_loop = asyncio.get_running_loop()
             
             # Перевірка токена
-            if not self.config.get('telegram', {}).get('bot_token'):
-                logger.error("❌ Токен бота не налаштовано! Додайте його в config.json")
+            if not appconfig.token_is_set(self.config):
+                logger.error(
+                    "❌ Токен бота не налаштовано. Впишіть telegram.bot_token у %s "
+                    "(або через GUI-панель) і запустіть знову.", self.config_path)
                 return
             
             # Створення Application з proxy підтримкою

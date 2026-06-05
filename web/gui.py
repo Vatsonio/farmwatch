@@ -20,8 +20,9 @@ import time
 import uvicorn
 import webview
 import pystray
-from PIL import Image, ImageDraw
 
+import appconfig
+from web.icon import make_tray_image
 from web.server import app
 from printer_monitor import BambuPrinterMonitor, BAMBU_EXE_PATH
 
@@ -49,10 +50,7 @@ def _wait_up(port: int, timeout: float = 8.0) -> bool:
 
 def _start_monitor():
     """Connect to an already running debug client (no relaunch) for live metrics."""
-    try:
-        cfg = json.load(open("config.json", encoding="utf-8")).get("monitor", {})
-    except Exception:
-        cfg = {}
+    cfg = appconfig.load_config().get("monitor", {})
     mon = BambuPrinterMonitor(
         debug_port=cfg.get("debug_port", 9222),
         update_interval=cfg.get("update_interval", 30),
@@ -68,49 +66,8 @@ def _start_monitor():
     return mon
 
 
-def make_tray_image(size: int = 64) -> Image.Image:
-    """farmwatch tray icon: a brass filament spool seen head-on that doubles as a
-    watching eye/target. A solid brass flange ring surrounds a dark moat and a
-    floating brass hub (the pupil / spool core). Everything is a fraction of size,
-    rendered at 4x and LANCZOS-downsampled, so the bold silhouette stays crisp at
-    16x16 and 32x32 in the tray and still reads at 64px for the window icon.
-    """
-    ss = 4  # supersample for clean antialiased edges at tiny sizes
-    S = size * ss
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-
-    brass = (217, 154, 78, 255)     # #d99a4e  primary accent
-    brass_lt = (232, 173, 99, 255)  # #e8ad63  highlight
-    field = (12, 14, 18, 255)       # #0c0e12  near-black moat
-
-    c = S / 2.0
-
-    def circle(cx, cy, r, fill=None, outline=None, width=1):
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill,
-                  outline=outline, width=int(round(width)))
-
-    R = S * 0.46        # outer brass disc radius (spool flange edge)
-    ring_w = S * 0.135  # flange thickness
-    hub_r = S * 0.135   # central pupil / spool hub radius
-
-    circle(c, c, R, fill=brass)            # solid brass outer disc
-    circle(c, c, R - ring_w, fill=field)   # dark filament gap -> bold ring
-    circle(c, c, hub_r, fill=brass)        # brass hub floating in the moat
-
-    hw = ring_w * 0.5
-    arc_r = R - ring_w * 0.5
-    d.arc([c - arc_r, c - arc_r, c + arc_r, c + arc_r],
-          start=200, end=315, fill=brass_lt, width=int(round(hw)))
-
-    cl_r = hub_r * 0.42
-    cl_off = hub_r * 0.30
-    circle(c - cl_off, c - cl_off, cl_r, fill=brass_lt)
-
-    return img.resize((size, size), Image.LANCZOS)
-
-
 def main():
+    appconfig.ensure_config()
     port = _free_port()
     app.state.monitor = _start_monitor()
     threading.Thread(

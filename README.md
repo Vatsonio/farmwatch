@@ -22,9 +22,12 @@ Chrome DevTools Protocol (CDP/WebSocket), зчитує статус принте
 - `latest` — prerelease, що оновлюється на кожен пуш у `main`; кожна збірка має
   унікальну версію `X.Y.Z-dev.<коміт>` (`farmwatch-X.Y.Z-dev.<коміт>-windows.zip`).
 
-У zip лежить `farmwatch-X.Y.Z.exe` (Python не потрібен), `config.example.json` і цей README.
-Версія є і в назві exe, і в команді `/version`, і в логах при старті — щоб не плутати збірки.
-Розпакуйте, скопіюйте `config.example.json` у `config.json`, впишіть токен — і запускайте exe.
+У zip два exe (Python не потрібен):
+- `farmwatch-X.Y.Z.exe`: консольний бот;
+- `farmwatch-gui-X.Y.Z.exe`: панель налаштувань з живими метриками, що ховається в трей.
+
+`config.json` створюється автоматично поруч з exe при першому запуску, якщо його ще нема.
+Запусти `farmwatch-gui`, впиши токен у панелі та збережи; або відредагуй `config.json` руками і запусти консольний `farmwatch`.
 
 ## Вимоги (запуск з вихідного коду)
 

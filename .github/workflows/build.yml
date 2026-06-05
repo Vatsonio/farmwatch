@@ -45,12 +45,35 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build portable exe
+      - name: Generate app icon
+        shell: pwsh
+        run: python -c "from web import icon; print(icon.make_ico('farmwatch.ico'))"
+
+      - name: Build console exe (bot)
         run: >
           pyinstaller --onefile --console
           --name "farmwatch-${{ steps.ver.outputs.version }}"
+          --icon farmwatch.ico
           --collect-submodules telegram
           telegram_bot.py
+
+      - name: Build GUI exe (tray panel)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          pyinstaller --onefile --windowed `
+            --name "farmwatch-gui-$ver" `
+            --icon farmwatch.ico `
+            --add-data "web/static;web/static" `
+            --collect-all webview `
+            --collect-all clr_loader `
+            --collect-submodules uvicorn `
+            --collect-submodules pystray `
+            --collect-submodules PIL `
+            --hidden-import clr `
+            --copy-metadata pywebview `
+            web/gui.py
 
       - name: Assemble portable package
         id: pkg
@@ -59,7 +82,13 @@ jobs:
           $ver = "${{ steps.ver.outputs.version }}"
           $zip = "farmwatch-$ver-windows.zip"
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item "dist/farmwatch-$ver.exe" release/
+          Copy-Item "dist/farmwatch-$ver.exe" release/                              # console bot
+          if (Test-Path "dist/farmwatch-gui-$ver.exe") {
+            Copy-Item "dist/farmwatch-gui-$ver.exe" release/                         # tray panel
+            Write-Host "GUI exe included"
+          } else {
+            Write-Host "GUI exe was not built (skipping)"
+          }
           Copy-Item config.example.json release/
           Copy-Item README.md release/
           Compress-Archive -Path release/* -DestinationPath $zip -Force
