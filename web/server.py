@@ -241,6 +241,39 @@ async def api_metrics():
         return {"connected": False, "error": str(e), "summary": {}, "active": []}
 
 
+def _build_monitor():
+    from printer_monitor import BambuPrinterMonitor, BAMBU_EXE_PATH
+    cfg = load_config().get("monitor", {})
+    return BambuPrinterMonitor(
+        debug_port=cfg.get("debug_port", 9222),
+        update_interval=cfg.get("update_interval", 30),
+        exe_path=cfg.get("exe_path", BAMBU_EXE_PATH),
+        auto_launch=False,
+        debug_logging=bool(cfg.get("debug_logging", False)),
+    )
+
+
+@app.post("/api/monitor/restart")
+async def api_monitor_restart():
+    """Stop and reconnect the live metrics monitor (recovers a stale or 0 card state)."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    old = app.state.monitor
+    if old is not None:
+        try:
+            await loop.run_in_executor(None, old.stop)
+        except Exception:
+            pass
+    mon = _build_monitor()
+    try:
+        ok = await loop.run_in_executor(None, mon.start)  # start connects; off the loop
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    app.state.monitor = mon
+    return {"ok": bool(ok), "running": getattr(mon, "running", False),
+            "printers": len(mon.get_all_printers())}
+
+
 def main():
     import argparse
     import uvicorn

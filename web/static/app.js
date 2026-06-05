@@ -276,6 +276,16 @@
     $("#log-name").onchange = loadLog;
     $("#diag-copy").onclick = () => copyBtn($("#diag-copy"), $("#diag-list").innerText);
     $("#log-copy").onclick = () => copyBtn($("#log-copy"), $("#log-view").innerText);
+    $("#mon-restart").onclick = async () => {
+      const b = $("#mon-restart"), prev = b.textContent;
+      b.disabled = true; b.textContent = "Restarting";
+      try {
+        const r = await (await fetch("/api/monitor/restart", { method: "POST" })).json();
+        b.textContent = r.ok ? "Reconnected" : "No client";
+      } catch (e) { b.textContent = "Error"; }
+      loadMetrics();
+      setTimeout(() => { b.textContent = prev; b.disabled = false; }, 1600);
+    };
     window.addEventListener("beforeunload", (e) => {
       if (JSON.stringify(cfg) !== original) { e.preventDefault(); e.returnValue = ""; }
     });
