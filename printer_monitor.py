@@ -236,25 +236,26 @@ class BambuPrinterMonitor:
                 url = p.get('url', '')[:70]
                 logger.info(f"  • {title} | {url}")
             
-            # Логіка як в export_dashboard.py
+            # Картки принтерів є ЛИШЕ на роуті #/monitor. Зазвичай це окреме
+            # фонове dashboard-вікно, а головне вікно лишається для користувача.
+            # Тому ПЕРШИМ ділом чіпляємось саме до #/monitor, не чіпаючи головне.
+            def _usable(p):
+                return (p.get("type") == "page" and "webSocketDebuggerUrl" in p
+                        and not p.get("url", "").startswith("devtools://"))
+
             for page in pages:
-                title = page.get("title", "").lower()
-                url = page.get("url", "").lower()
-                
-                # Шукаємо Dashboard за ключовими словами
-                if any(x in title for x in ["dashboard", "farm", "принтери", "bambu"]):
-                    logger.info(f"✓ Знайдено Dashboard за назвою: {page['title']}")
+                if _usable(page) and "#/monitor" in page.get("url", "").lower():
+                    logger.info(f"✓ Dashboard-вікно (#/monitor): {page.get('title')}")
                     return page
-                if any(x in url for x in ["/dashboard", "/printers", "index.html", "/home", "#/monitor", "#/printers"]):
-                    logger.info(f"✓ Знайдено Dashboard за URL: {url}")
+
+            # Фолбек: єдине доступне вікно (його перемкне на #/monitor
+            # connect_websocket). Якщо тримаєш dashboard окремим вікном — сюди не дійде.
+            for page in pages:
+                if _usable(page):
+                    logger.info(f"✓ Fallback page (перемкну на #/monitor): "
+                                f"{page.get('title')} | {page.get('url', '')[:50]}")
                     return page
-                
-                # Перша page (не devtools)
-                if "webSocketDebuggerUrl" in page and page.get("type") == "page":
-                    if not any(p.get("url", "").startswith("devtools://") for p in pages):
-                        logger.info(f"✓ Вибрано першу page: {page['title']}")
-                        return page
-            
+
             return pages[0] if pages else None
         except Exception as e:
             logger.error(f"Помилка отримання сторінки: {e}")
