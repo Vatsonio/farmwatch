@@ -107,6 +107,7 @@
     try {
       const s = await (await fetch("/api/status")).json();
       $("#ver").textContent = "v" + s.version;
+      document.title = "FarmWatch v" + s.version;
       setStat("s-version", s.version);
       setStat("s-bot", s.bot_running ? "running" : "stopped", s.bot_running ? "ok" : "");
       $("#bot-led").className = "led " + (s.bot_running ? "on" : "off");

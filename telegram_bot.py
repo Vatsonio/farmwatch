@@ -45,6 +45,23 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+class _ShortNetErr(logging.Filter):
+    """Стіну трейсбеків від мережевих збоїв Telegram-поллінгу згортаємо в один рядок."""
+
+    def filter(self, record):
+        msg = record.getMessage()
+        if ("polling for updates" in msg) or ("NetworkError" in msg) or ("ConnectError" in msg):
+            record.exc_info = None
+            record.exc_text = None
+            record.msg = "Telegram недоступний (мережа), повторюю спробу"
+            record.args = ()
+        return True
+
+
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_ShortNetErr())
+
+
 class BambuTelegramBot:
     """Telegram бот для управління моніторингом принтерів"""
     

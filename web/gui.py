@@ -22,6 +22,7 @@ import webview
 import pystray
 
 import appconfig
+from version import __version__
 from web.icon import make_tray_image
 from web.server import app
 from printer_monitor import BambuPrinterMonitor, BAMBU_EXE_PATH
@@ -81,7 +82,7 @@ def main():
     url = f"http://127.0.0.1:{port}/"
 
     window = webview.create_window(
-        "farmwatch", url, width=1240, height=880, min_size=(900, 640),
+        f"FarmWatch v{__version__}", url, width=1240, height=880, min_size=(900, 640),
         background_color=WINDOW_BG, hidden=True,
     )
 
