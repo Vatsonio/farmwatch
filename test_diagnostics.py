@@ -187,9 +187,55 @@ def test_zero_cards_anomaly():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _mon_card(name, status_text, nozzle="0/0°C", bed="0/0°C", speed="Standard", file="job.3mf"):
+    """Картка у форматі реального дашборда Bambu (роут #/monitor)."""
+    return (
+        '<div class="monitor_printer h-full p-2 flex gap-1 flex-col text-xs border rounded-[4px] min-h-32">'
+        f'<div class="monitor_printer-name overflow-hidden text-ellipsis line-clamp-2 break-words">{name}</div>'
+        f'<div class="flex-grow overflow-hidden"><div class="monitor_printing_file text-gray-700">{file}</div></div>'
+        '<div class="text-[10px]">'
+        f'<div class="flex items-center gap-1 text-gray-700"><span>{speed}</span></div>'
+        '<div class="text-gray-700 flex items-center gap-2">'
+        f'<div class="flex items-center gap-1"><span>{nozzle}</span></div>'
+        f'<div class="flex items-center gap-1"><span>{bed}</span><span></span></div>'
+        '</div></div>'
+        f'<div class="monitor_printer-status -m-2 -mt-0 py-[2px] text-center text-sm">{status_text}</div>'
+        '</div>'
+    )
+
+
+def test_real_dashboard_markup():
+    """Реальна розмітка #/monitor: статуси printing/finished/idle і модель з дужок."""
+    tmp = tempfile.mkdtemp()
+    try:
+        m = _new_monitor(tmp)
+        html = '<div class="monitor_printers monitor_printers--large">' + "".join([
+            _mon_card("1. (A1 mini)", "60% -1h36m", nozzle="245/245°C", bed="80/80°C"),
+            _mon_card("6. (A1)", "Finished", nozzle="52/--°C", bed="52/--°C"),
+            _mon_card("3. (A1)", "Idle", nozzle="31/--°C", bed="29/--°C"),
+        ]) + "</div>"
+        printers = {p.name: p for p in m.parse_printers_from_html(html)}
+        assert len(printers) == 3, printers
+
+        a = printers["1. (A1 mini)"]
+        assert a.status == "printing", a.status
+        assert a.progress == 60, a.progress
+        assert a.remaining_time == "-1h36m", a.remaining_time
+        assert a.model == "A1 mini", a.model
+        assert a.nozzle_temp == "245/245°C", a.nozzle_temp
+
+        assert printers["6. (A1)"].status == "finished", printers["6. (A1)"].status
+        assert printers["3. (A1)"].status == "idle", printers["3. (A1)"].status
+        assert printers["3. (A1)"].model == "A1", printers["3. (A1)"].model
+        print("OK  test_real_dashboard_markup")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_parse_stats_counts()
     test_status_parsing()
+    test_real_dashboard_markup()
     test_vanish_detection_and_dump()
     test_no_false_vanish_on_stable()
     test_zero_cards_anomaly()

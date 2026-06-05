@@ -10,6 +10,7 @@ import time
 import threading
 import subprocess
 import os
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
@@ -305,13 +306,28 @@ class BambuPrinterMonitor:
             if not self.wait_for_page_load():
                 logger.error("❌ Не вдалось завантажити сторінку")
                 return False
-            
+
+            # Картки monitor_printer є ЛИШЕ на роуті #/monitor (вид Dashboard).
+            # На інших вкладках (Printers/Tasks/Files/...) карток нема -> scrape 0.
+            self._ensure_dashboard()
+            time.sleep(2)
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Помилка підключення WebSocket: {e}")
             return False
-    
+
+    def _ensure_dashboard(self):
+        """Тримати SPA на роуті #/monitor — тільки там рендеряться картки принтерів."""
+        try:
+            self._send_command(4, "Runtime.evaluate", {
+                "expression": "if(location.hash!=='#/monitor'){location.hash='#/monitor';}",
+                "awaitPromise": False,
+            })
+        except Exception as e:
+            logger.debug(f"Не вдалось перемкнути на #/monitor: {e}")
+
     def _send_command(self, cmd_id: int, method: str, params: Optional[dict] = None) -> dict:
         """Відправка команди через WebSocket"""
         if not self.ws_connection:
@@ -416,7 +432,7 @@ class BambuPrinterMonitor:
                     text = span.get_text(strip=True)
                     if '°C' in text and '/' in text:
                         temp_values.append(text)
-                    elif text in ['Standard', 'Sport', 'Ludicrous']:
+                    elif text in ['Silent', 'Standard', 'Sport', 'Ludicrous']:
                         speed = text
                 
                 # Перша температура - nozzle, друга - bed
@@ -425,33 +441,35 @@ class BambuPrinterMonitor:
                 if len(temp_values) >= 2:
                     bed_temp = temp_values[1]
                 
-                # Визначення статусу та онлайн
-                # Принтер онлайн якщо статус НЕ "offline"
+                # Визначення статусу та онлайн. Дашборд для активного друку дає
+                # просто "10% -6h53m" (без слова printing), тож прогрес і час що
+                # лишився це теж ознака друку.
                 status_lower = status_text.lower()
-                online = 'offline' not in status_lower
-                
-                # Статус друку
-                if 'finished' in status_lower:
+                online = 'offline' not in status_lower and 'disconnect' not in status_lower
+
+                if 'finish' in status_lower or 'complete' in status_lower:
                     status = 'finished'
-                elif 'paused' in status_lower or 'pause' in status_lower:
+                elif 'paus' in status_lower:
                     status = 'paused'
-                elif 'stopped' in status_lower or 'stop' in status_lower:
+                elif ('stop' in status_lower or 'cancel' in status_lower
+                        or 'error' in status_lower or 'fail' in status_lower):
                     status = 'stopped'
-                elif progress > 0:
+                elif ('print' in status_lower or 'heat' in status_lower
+                        or 'prepar' in status_lower or 'running' in status_lower
+                        or progress > 0 or remaining_time):
                     status = 'printing'
-                elif online:
-                    status = 'idle'
-                else:
+                elif not online:
                     status = 'offline'
-                
-                # Модель (витягуємо з назви)
-                model = "A1"  # За замовчуванням
-                if '(A1)' in name or '(a1)' in name.lower():
-                    model = "A1"
-                elif '(X1)' in name or '(x1)' in name.lower():
-                    model = "X1"
-                elif '(P1)' in name or '(p1)' in name.lower():
-                    model = "P1"
+                else:
+                    status = 'idle'
+
+                # Модель: на дашборді вона у дужках наприкінці назви, напр. "2. (A1)".
+                # Беремо вміст останніх дужок — покриває будь-яку модель
+                # (A1, A1 mini, X1, X1C, X1E, P1P, P1S, H2D тощо).
+                model = "A1"
+                mm = re.search(r'\(([^)]{1,20})\)\s*$', name)
+                if mm:
+                    model = mm.group(1).strip()
                 
                 printer = PrinterStatus(
                     name=name,
@@ -543,6 +561,11 @@ class BambuPrinterMonitor:
                 return False
             
             new_printers = self.parse_printers_from_html(html)
+
+            # Карток нема взагалі -> найімовірніше клієнт пішов з роуту дашборда
+            # (#/monitor). Повертаємо його, щоб наступний цикл був уже з даними.
+            if not new_printers and self._last_parse_stats.get('cards_found', 0) == 0:
+                self._ensure_dashboard()
 
             # Діагностика зникнення принтерів (до застосування оновлень).
             # Ніколи не має ламати моніторинг — тому в try.
@@ -767,16 +790,59 @@ class BambuPrinterMonitor:
             'offline': len(printers) - online,
         }
     
+    def _reconnect(self) -> bool:
+        """Перепідключити CDP websocket після обриву чи перезавантаження дашборда.
+
+        Закриває старе зʼєднання, за потреби (і якщо auto_launch) перезапускає
+        клієнт, і піднімає websocket наново. Повертає True при успіху.
+        """
+        try:
+            if self.ws_connection:
+                try:
+                    self.ws_connection.close()
+                except Exception:
+                    pass
+                self.ws_connection = None
+
+            if not self.is_app_running():
+                if self.auto_launch:
+                    logger.info("Клієнт недоступний на debug-порту — перезапускаю")
+                    if not self.launch_app():
+                        return False
+                else:
+                    logger.warning("Клієнт недоступний на debug-порту і auto_launch вимкнено")
+                    return False
+
+            if self.connect_websocket():
+                logger.info("✓ CDP перепідключено")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Перепідключення не вдалось: {e}")
+            return False
+
     def _monitor_loop(self):
         """Основний цикл моніторингу"""
         logger.info("🚀 Моніторинг запущено")
-        
+
+        failures = 0
         while self.running:
             try:
-                self.update_printers()
+                ok = self.update_printers()
+                if ok:
+                    failures = 0
+                else:
+                    failures += 1
+                    if failures >= 2:
+                        logger.warning("Кілька невдалих оновлень поспіль — перепідключаю CDP")
+                        if self._reconnect():
+                            failures = 0
                 time.sleep(self.update_interval)
             except Exception as e:
                 logger.error(f"Помилка у циклі моніторингу: {e}")
+                failures += 1
+                if failures >= 2 and self._reconnect():
+                    failures = 0
                 time.sleep(5)  # Чекаємо перед повторною спробою
     
     def start(self) -> bool:
