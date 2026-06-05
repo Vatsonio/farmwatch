@@ -43,7 +43,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install --upgrade pyinstaller pyinstaller-hooks-contrib
 
       - name: Generate app icon
         shell: pwsh
@@ -65,14 +65,32 @@ jobs:
           pyinstaller --onefile --windowed `
             --name "farmwatch-gui-$ver" `
             --icon farmwatch.ico `
+            --paths . `
             --add-data "web/static;web/static" `
             --collect-all webview `
+            --collect-all pythonnet `
             --collect-all clr_loader `
-            --collect-submodules uvicorn `
-            --collect-submodules pystray `
-            --collect-submodules PIL `
+            --collect-all pystray `
             --hidden-import clr `
-            --copy-metadata pywebview `
+            --hidden-import clr_loader `
+            --hidden-import pystray._win32 `
+            --hidden-import PIL `
+            --collect-submodules uvicorn `
+            --hidden-import uvicorn `
+            --hidden-import uvicorn.lifespan.on `
+            --hidden-import uvicorn.lifespan.off `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.loops.asyncio `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import uvicorn.protocols.http.h11_impl `
+            --hidden-import uvicorn.protocols.websockets.auto `
+            --hidden-import uvicorn.protocols.websockets.websockets_impl `
+            --hidden-import uvicorn.protocols.websockets.wsproto_impl `
+            --copy-metadata uvicorn `
+            --copy-metadata fastapi `
+            --exclude-module PyQt5 `
+            --exclude-module PyQt6 `
+            --exclude-module gi `
             web/gui.py
 
       - name: Assemble portable package

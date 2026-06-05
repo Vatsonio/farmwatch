@@ -70,8 +70,11 @@ def main():
     appconfig.ensure_config()
     port = _free_port()
     app.state.monitor = _start_monitor()
+    # use_colors=False + log_config=None: in a --windowed frozen exe sys.stdout is
+    # None, and uvicorn's default log formatter calls sys.stdout.isatty() and crashes.
     threading.Thread(
-        target=lambda: uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning"),
+        target=lambda: uvicorn.run(app, host="127.0.0.1", port=port,
+                                   log_level="warning", use_colors=False, log_config=None),
         daemon=True,
     ).start()
     _wait_up(port)
