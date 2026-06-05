@@ -37,6 +37,22 @@
 
   <main class="layout" id="panels">
 
+    <!-- FARM METRICS -->
+    <section class="panel panel--wide" id="metrics-panel">
+      <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Farm metrics</span>
+        <span class="panel__hint" id="metrics-conn">connecting</span></div>
+      <div class="metrics-grid">
+        <div class="metric"><span class="metric__label">Total</span><span class="metric__val num" data-m="total">0</span></div>
+        <div class="metric"><span class="metric__label">Online</span><span class="metric__val num" data-m="online">0</span></div>
+        <div class="metric"><span class="metric__label">Printing</span><span class="metric__val num" data-m="printing">0</span></div>
+        <div class="metric"><span class="metric__label">Finished</span><span class="metric__val num" data-m="finished">0</span></div>
+        <div class="metric"><span class="metric__label">Idle</span><span class="metric__val num" data-m="idle">0</span></div>
+        <div class="metric"><span class="metric__label">Offline</span><span class="metric__val num" data-m="offline">0</span></div>
+      </div>
+      <div class="subhead">Active prints</div>
+      <div id="metrics-active"><div class="metrics-off">connecting to the monitor...</div></div>
+    </section>
+
     <!-- TELEGRAM -->
     <section class="panel">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Telegram</span></div>

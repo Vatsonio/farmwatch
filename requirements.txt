@@ -4,7 +4,9 @@ requests>=2.31
 websocket-client>=1.7
 beautifulsoup4>=4.12
 
-# v2 settings panel (web/)
+# v2 tray app and settings panel (web/)
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pywebview>=5.0
+pystray>=0.19
+pillow>=10.0

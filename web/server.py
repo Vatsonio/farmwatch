@@ -35,6 +35,7 @@ LOG_FILES = {
 }
 
 app = FastAPI(title="farmwatch settings")
+app.state.monitor = None  # the tray app (web.gui) sets this for live farm metrics
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
@@ -209,6 +210,30 @@ async def api_diagnostics(tail: int = 60):
     dumps_dir = ROOT / "debug_dumps"
     dumps = sorted([p.name for p in dumps_dir.glob("*.html")], reverse=True) if dumps_dir.exists() else []
     return {"disappearances": hits[-tail:], "dump_count": len(dumps), "dumps": dumps[:40]}
+
+
+@app.get("/api/metrics")
+async def api_metrics():
+    """Live farm metrics from the monitor (used by the tray window)."""
+    m = getattr(app.state, "monitor", None)
+    if not m or not getattr(m, "running", False):
+        return {"connected": False, "summary": {}, "active": []}
+    try:
+        active = []
+        for p in m.get_all_printers():
+            if str(p.status).lower() == "printing":
+                active.append({
+                    "name": p.name,
+                    "progress": p.progress,
+                    "remaining_time": p.remaining_time,
+                    "file": p.current_file,
+                    "nozzle": p.nozzle_temp,
+                    "bed": p.bed_temp,
+                })
+        active.sort(key=lambda x: (x["progress"] is None, -(x["progress"] or 0)))
+        return {"connected": True, "summary": m.get_summary(), "active": active}
+    except Exception as e:
+        return {"connected": False, "error": str(e), "summary": {}, "active": []}
 
 
 def main():

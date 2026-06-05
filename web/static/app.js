@@ -148,6 +148,43 @@
     } catch (e) { view.textContent = "(could not load log)"; }
   }
 
+  /* ---- farm metrics ---- */
+  function _esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g,
+      c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+  function _eta(rt) {
+    const m = /-?(\d+)h(\d+)m/.exec(rt || "");
+    if (m) return (+m[1]) + "h " + String(+m[2]).padStart(2, "0") + "m left";
+    const o = /-?(\d+)m/.exec(rt || "");
+    return o ? (+o[1]) + "m left" : "";
+  }
+  async function loadMetrics() {
+    try {
+      const m = await (await fetch("/api/metrics")).json();
+      const conn = $("#metrics-conn");
+      const s = m.summary || {};
+      $$("[data-m]").forEach((n) => { n.textContent = m.connected ? (s[n.dataset.m] ?? 0) : "."; });
+      conn.textContent = m.connected ? "live" : "monitor offline";
+      conn.style.color = m.connected ? "var(--ok)" : "var(--text-muted)";
+      const box = $("#metrics-active");
+      if (!m.connected) {
+        box.innerHTML = '<div class="metrics-off">Monitor offline. Start the Bambu client with the '
+          + 'debug port (start-bambu-debug.bat) and keep a Dashboard window open.</div>';
+        return;
+      }
+      const act = m.active || [];
+      if (!act.length) { box.innerHTML = '<div class="metrics-off">No active prints right now.</div>'; return; }
+      box.innerHTML = act.map((p) => {
+        const pct = Math.max(0, Math.min(100, p.progress || 0));
+        return '<div class="active-row"><span class="active-row__name" title="' + _esc(p.file || "") + '">'
+          + _esc(p.name) + '</span>'
+          + '<div class="active-row__bar"><div class="active-row__fill" style="width:' + pct + '%"></div></div>'
+          + '<span class="active-row__meta">' + pct + '%   ' + _esc(_eta(p.remaining_time)) + '</span></div>';
+      }).join("");
+    } catch (e) { /* keep last */ }
+  }
+
   /* ---- save / revert ---- */
   async function save() {
     const btn = $("#save");
@@ -219,9 +256,11 @@
     });
 
     loadStatus();
+    loadMetrics();
     loadDiagnostics();
     loadLog();
     setInterval(loadStatus, 5000);
+    setInterval(loadMetrics, 4000);
     tick(); setInterval(tick, 1000);
   }
 
