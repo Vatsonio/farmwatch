@@ -181,28 +181,31 @@
         return;
       }
       const act = m.active || [];
+      const cnt = $("#active-count");
+      if (cnt) {
+        const np = act.filter((p) => p.status === "paused").length;
+        const npr = act.length - np;
+        cnt.textContent = act.length
+          ? (npr + " printing" + (np ? " · " + np + " paused" : "")) : "";
+      }
       if (!act.length) { box.innerHTML = '<div class="metrics-off">No active prints right now.</div>'; return; }
       box.innerHTML = act.map((p) => {
         const pct = Math.max(0, Math.min(100, p.progress || 0));
-        const eta = _eta(p.remaining_time);
-        const kv = (k, v) => v ? '<span class="kv"><span class="kv__k">' + k + '</span><span class="kv__v">' + _esc(v) + '</span></span>' : "";
-        const stats = [
-          p.file ? '<span class="kv kv--file"><span class="kv__k">file</span><span class="kv__v" title="' + _esc(p.file) + '">' + _esc(p.file) + '</span></span>' : "",
-          kv("nozzle", p.nozzle),
-          kv("bed", p.bed),
-          kv("speed", p.speed),
-        ].join("");
-        return '<div class="active-row">'
-          + '<div class="active-row__top">'
-          + '<span class="active-row__name">' + _esc(p.name) + '</span>'
-          + (p.model ? '<span class="active-row__model">' + _esc(p.model) + '</span>' : "")
-          + '<span class="active-row__eta">' + (eta ? _esc(eta) : "") + '</span>'
+        const paused = (p.status === "paused");
+        const right = paused ? "paused" : (_eta(p.remaining_time) || "");
+        const sub = [p.file, p.nozzle, p.bed, p.speed].filter(Boolean).map(_esc).join("  ·  ");
+        return '<div class="active-card' + (paused ? " is-paused" : "") + '">'
+          + '<div class="active-card__top">'
+          + '<span class="active-dot" aria-hidden="true"></span>'
+          + '<span class="active-card__name" title="' + _esc(p.file || p.name) + '">' + _esc(p.name) + '</span>'
+          + (p.model ? '<span class="active-card__model">' + _esc(p.model) + '</span>' : "")
+          + '<span class="active-card__eta">' + _esc(right) + '</span>'
           + '</div>'
-          + '<div class="active-row__progress">'
-          + '<div class="active-row__bar"><div class="active-row__fill" style="width:' + pct + '%"></div></div>'
-          + '<span class="active-row__pct">' + pct + '%</span>'
+          + '<div class="active-card__progress">'
+          + '<div class="active-card__bar"><div class="active-card__fill" style="width:' + pct + '%"></div></div>'
+          + '<span class="active-card__pct">' + pct + '%</span>'
           + '</div>'
-          + (stats ? '<div class="active-row__stats">' + stats + '</div>' : "")
+          + (sub ? '<div class="active-card__sub" title="' + _esc(p.file || "") + '">' + sub + '</div>' : "")
           + '</div>';
       }).join("");
     } catch (e) { /* keep last */ }
@@ -318,6 +321,29 @@
       setTimeout(loadStatus, 2500);
       setTimeout(() => { b.textContent = prev; b.disabled = false; }, 2600);
     };
+    // theme toggle (persisted; applied early by an inline head script to avoid flash)
+    const applyTheme = (t) => {
+      document.documentElement.setAttribute("data-theme", t);
+      const b = $("#theme-toggle");
+      if (b) { b.textContent = t === "light" ? "☀" : "◐"; b.title = t === "light" ? "Switch to dark" : "Switch to light"; }
+    };
+    let theme = (() => { try { return localStorage.getItem("fw-theme") || "dark"; } catch (e) { return "dark"; } })();
+    applyTheme(theme);
+    $("#theme-toggle").onclick = () => {
+      theme = theme === "light" ? "dark" : "light";
+      try { localStorage.setItem("fw-theme", theme); } catch (e) {}
+      applyTheme(theme);
+    };
+
+    // fullscreen toggle
+    const fsBtn = $("#fs-toggle");
+    const syncFs = () => { fsBtn.textContent = document.fullscreenElement ? "🗗" : "⛶"; };
+    fsBtn.onclick = () => {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else document.documentElement.requestFullscreen().catch(() => {});
+    };
+    document.addEventListener("fullscreenchange", syncFs);
+
     window.addEventListener("beforeunload", (e) => {
       if (JSON.stringify(cfg) !== original) { e.preventDefault(); e.returnValue = ""; }
     });

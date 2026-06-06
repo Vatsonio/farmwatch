@@ -448,9 +448,19 @@ class BambuPrinterMonitor:
                 status_lower = status_text.lower()
                 online = 'offline' not in status_lower and 'disconnect' not in status_lower
 
+                # A paused print often keeps showing its progress %, so the word
+                # "pause" may live in an icon/badge inside the status block or in a
+                # modifier class on the card rather than in the status text. Look in
+                # the status element subtree and the card's own classes too (both are
+                # state markup, not the always present pause control button).
+                status_html = str(status_elem).lower() if status_elem else ""
+                card_classes = " ".join(card.get('class', []) or []).lower()
+                is_paused = ('paus' in status_lower or 'paus' in status_html
+                             or 'paus' in card_classes)
+
                 if 'finish' in status_lower or 'complete' in status_lower:
                     status = 'finished'
-                elif 'paus' in status_lower:
+                elif is_paused:
                     status = 'paused'
                 elif ('stop' in status_lower or 'cancel' in status_lower
                         or 'error' in status_lower or 'fail' in status_lower):

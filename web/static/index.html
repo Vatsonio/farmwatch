@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css">
+  <script>try{var t=localStorage.getItem("fw-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 </head>
 <body>
   <a class="skip-link" href="#panels">Skip to settings</a>
@@ -22,6 +23,8 @@
     <div class="command-bar__spacer"></div>
     <span class="ver-chip" id="ver">v0.0</span>
     <span class="status-pill"><span class="led off" id="bot-led"></span><span class="t-label" id="bot-label">BOT</span></span>
+    <button class="icon-btn" id="theme-toggle" type="button" title="Light / dark theme" aria-label="Toggle theme">◐</button>
+    <button class="icon-btn" id="fs-toggle" type="button" title="Fullscreen" aria-label="Toggle fullscreen">⛶</button>
     <span class="clock" id="clock">00:00:00</span>
   </header>
 
@@ -47,12 +50,13 @@
         <div class="metric"><span class="metric__label">Total</span><span class="metric__val num" data-m="total">0</span></div>
         <div class="metric"><span class="metric__label">Online</span><span class="metric__val num" data-m="online">0</span></div>
         <div class="metric"><span class="metric__label">Printing</span><span class="metric__val num" data-m="printing">0</span></div>
+        <div class="metric"><span class="metric__label">Paused</span><span class="metric__val num" data-m="paused">0</span></div>
         <div class="metric"><span class="metric__label">Finished</span><span class="metric__val num" data-m="finished">0</span></div>
         <div class="metric"><span class="metric__label">Idle</span><span class="metric__val num" data-m="idle">0</span></div>
         <div class="metric"><span class="metric__label">Offline</span><span class="metric__val num" data-m="offline">0</span></div>
       </div>
-      <div class="subhead">Active prints</div>
-      <div id="metrics-active"><div class="metrics-off">connecting to the monitor...</div></div>
+      <div class="subhead">Active prints <span class="subhead__count" id="active-count"></span></div>
+      <div id="metrics-active" class="active-grid"><div class="metrics-off">connecting to the monitor...</div></div>
     </section>
 
     <!-- TELEGRAM -->

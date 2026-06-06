@@ -237,10 +237,12 @@ async def api_metrics():
     try:
         active = []
         for p in m.get_all_printers():
-            if str(p.status).lower() == "printing":
+            st = str(p.status).lower()
+            if st in ("printing", "paused"):
                 active.append({
                     "name": p.name,
                     "model": getattr(p, "model", ""),
+                    "status": st,
                     "progress": p.progress,
                     "remaining_time": p.remaining_time,
                     "file": p.current_file,
@@ -248,7 +250,9 @@ async def api_metrics():
                     "bed": p.bed_temp,
                     "speed": getattr(p, "speed", ""),
                 })
-        active.sort(key=lambda x: (x["progress"] is None, -(x["progress"] or 0)))
+        # printing first, then paused; within each, highest progress first
+        active.sort(key=lambda x: (x["status"] != "printing",
+                                   x["progress"] is None, -(x["progress"] or 0)))
         return {"connected": True, "summary": m.get_summary(), "active": active}
     except Exception as e:
         return {"connected": False, "error": str(e), "summary": {}, "active": []}
