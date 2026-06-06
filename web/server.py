@@ -240,7 +240,7 @@ async def api_metrics():
         active = []
         for p in m.get_all_printers():
             st = str(p.status).lower()
-            if st in ("printing", "paused"):
+            if st in ("printing", "paused", "finished"):
                 active.append({
                     "name": p.name,
                     "model": getattr(p, "model", ""),
@@ -252,8 +252,9 @@ async def api_metrics():
                     "bed": p.bed_temp,
                     "speed": getattr(p, "speed", ""),
                 })
-        # printing first, then paused; within each, highest progress first
-        active.sort(key=lambda x: (x["status"] != "printing",
+        # order: printing, then paused, then finished; within each highest progress first
+        _order = {"printing": 0, "paused": 1, "finished": 2}
+        active.sort(key=lambda x: (_order.get(x["status"], 9),
                                    x["progress"] is None, -(x["progress"] or 0)))
         return {"connected": True, "summary": m.get_summary(), "active": active}
     except Exception as e:
@@ -360,6 +361,36 @@ async def api_bot_start():
     import threading
     threading.Thread(target=runner, daemon=True).start()
     return {"ok": True, "running": True}
+
+
+@app.post("/api/bot/test")
+async def api_bot_test():
+    """Send a test message to the allowed chats to verify Telegram delivery."""
+    bot = getattr(app.state, "bot", None)
+    loop = getattr(app.state, "bot_loop", None)
+    if bot is None or loop is None:
+        return JSONResponse({"ok": False, "error": "bot is not running"}, status_code=409)
+    import asyncio
+    try:
+        fut = asyncio.run_coroutine_threadsafe(
+            bot.send_notification("✅ farmwatch: тестове повідомлення (Send test message)"),
+            loop,
+        )
+        fut.result(timeout=15)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return {"ok": True}
+
+
+@app.post("/api/open-folder")
+async def api_open_folder():
+    """Open the data folder (config.json + logs) in the file manager."""
+    try:
+        import os
+        os.startfile(str(ROOT))  # Windows Explorer at the data dir
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return {"ok": True}
 
 
 def main():

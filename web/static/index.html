@@ -54,11 +54,11 @@
         <div class="metric"><span class="metric__label">Offline</span><span class="metric__val num" data-m="offline">0</span></div>
       </div>
       <div class="subhead">Active prints <span class="subhead__count" id="active-count"></span></div>
-      <div id="metrics-active" class="active-grid"><div class="metrics-off">connecting to the monitor...</div></div>
+      <div id="metrics-active"><div class="metrics-off">connecting to the monitor...</div></div>
     </section>
 
     <!-- TELEGRAM -->
-    <section class="panel">
+    <section class="panel panel--collapsible is-collapsed">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Telegram</span></div>
 
       <div class="field field--stack">
@@ -111,7 +111,7 @@
     </section>
 
     <!-- MONITOR -->
-    <section class="panel">
+    <section class="panel panel--collapsible is-collapsed">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Monitor</span></div>
 
       <div class="field"><span class="field__label">Debug port <small>Chrome DevTools</small></span><div class="field__control">
@@ -127,7 +127,7 @@
     </section>
 
     <!-- NOTIFICATIONS -->
-    <section class="panel">
+    <section class="panel panel--collapsible is-collapsed">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Notifications</span></div>
       <div class="field toggle-row"><span class="field__label">Status changes</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.status_changes" aria-checked="false"></button></div></div>
       <div class="field toggle-row"><span class="field__label">Print complete</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.print_complete" aria-checked="false"></button></div></div>
@@ -135,6 +135,24 @@
       <div class="field toggle-row"><span class="field__label">Printer offline</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.printer_offline" aria-checked="false"></button></div></div>
       <div class="field toggle-row"><span class="field__label">Periodic updates</span><div class="field__control" style="justify-content:flex-end"><button class="toggle" role="switch" data-path="notifications.periodic_updates" aria-checked="false"></button></div></div>
       <div class="field"><span class="field__label">Periodic interval <small>seconds</small></span><div class="field__control"><input type="number" class="mono input-narrow" data-path="notifications.periodic_interval" placeholder="3600"></div></div>
+    </section>
+
+    <!-- TOOLS -->
+    <section class="panel">
+      <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Tools</span>
+        <span class="panel__hint" id="tool-msg" style="margin-left:auto"></span></div>
+      <div class="tool-row">
+        <button class="btn-mini" id="tool-test" type="button">Send test message</button>
+        <span class="tool-hint">Sends a Telegram message to the allowed chats to verify delivery.</span>
+      </div>
+      <div class="tool-row">
+        <button class="btn-mini" id="tool-folder" type="button">Open data folder</button>
+        <span class="tool-hint">Opens the folder with config.json and the logs.</span>
+      </div>
+      <div class="tool-row">
+        <button class="btn-mini" id="tool-reload" type="button">Reload config</button>
+        <span class="tool-hint">Restarts the bot so edits to allowed users, proxy and notifications apply.</span>
+      </div>
     </section>
 
     <!-- DIAGNOSTICS -->

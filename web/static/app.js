@@ -170,48 +170,121 @@
     const o = /-?(\d+)m/.exec(rt || "");
     return o ? (+o[1]) + "m left" : "";
   }
+  function _activeCard(p) {
+    const pct = Math.max(0, Math.min(100, p.progress || 0));
+    const paused = (p.status === "paused");
+    const finished = (p.status === "finished");
+    const cls = paused ? " is-paused" : (finished ? " is-finished" : "");
+    const right = finished ? "done" : (paused ? "paused" : (_eta(p.remaining_time) || ""));
+    const sub = [p.file, p.nozzle, p.bed, p.speed].filter(Boolean).map(_esc).join("  ·  ");
+    return '<div class="active-card' + cls + '">'
+      + '<div class="active-card__top">'
+      + '<span class="active-dot" aria-hidden="true"></span>'
+      + '<span class="active-card__name" title="' + _esc(p.file || p.name) + '">' + _esc(p.name) + '</span>'
+      + (p.model ? '<span class="active-card__model">' + _esc(p.model) + '</span>' : "")
+      + '<span class="active-card__eta">' + _esc(right) + '</span>'
+      + '</div>'
+      + '<div class="active-card__progress">'
+      + '<div class="active-card__bar"><div class="active-card__fill" style="width:' + pct + '%"></div></div>'
+      + '<span class="active-card__pct">' + pct + '%</span>'
+      + '</div>'
+      + (sub ? '<div class="active-card__sub" title="' + _esc(p.file || "") + '">' + sub + '</div>' : "")
+      + '</div>';
+  }
+
+  // Each section can be sorted independently; the chosen sort persists across refreshes.
+  function _etaMins(rt) {
+    const m = /-?(\d+)h(\d+)m/.exec(rt || "");
+    if (m) return (+m[1]) * 60 + (+m[2]);
+    const o = /-?(\d+)m/.exec(rt || "");
+    if (o) return +o[1];
+    return 1e9;  // unknown / none sorts last
+  }
+  const _SORTS = {
+    progress: { label: "%", fn: (a, b) => (b.progress || 0) - (a.progress || 0) },
+    eta: { label: "eta", fn: (a, b) => _etaMins(a.remaining_time) - _etaMins(b.remaining_time) },
+    name: { label: "a-z", fn: (a, b) => String(a.name).localeCompare(String(b.name)) },
+  };
+  const _SORT_ORDER = ["progress", "eta", "name"];
+  const _AGROUPS = [
+    { st: "printing", label: "Printing" },
+    { st: "paused", label: "Paused" },
+    { st: "finished", label: "Finished" },
+  ];
+  const _sortState = { printing: "progress", paused: "progress", finished: "name" };
+  let _activeCache = [];
+
+  function _paintGroups(box) {
+    const groups = { printing: [], paused: [], finished: [] };
+    _activeCache.forEach((p) => { if (groups[p.status]) groups[p.status].push(p); });
+    _AGROUPS.forEach((g) => {
+      const key = _sortState[g.st];
+      const arr = groups[g.st].slice().sort((_SORTS[key] || _SORTS.progress).fn);
+      const grp = box.querySelector('.agroup[data-st="' + g.st + '"]');
+      box.querySelector('[data-c="' + g.st + '"]').textContent = arr.length;
+      grp.style.display = arr.length ? "" : "none";
+      box.querySelector('[data-grid="' + g.st + '"]').innerHTML = arr.map(_activeCard).join("");
+      grp.querySelectorAll(".sortbtn").forEach((b) => b.classList.toggle("active", b.dataset.sort === key));
+    });
+  }
+
+  function _ensureGroups(box) {
+    if (box.dataset.mode === "groups") return;
+    box.dataset.mode = "groups";
+    box.innerHTML = _AGROUPS.map((g) =>
+      '<div class="agroup" data-st="' + g.st + '">'
+      + '<div class="agroup__head"><span class="agroup__title">' + g.label + '</span>'
+      + '<span class="agroup__sorts">'
+      + _SORT_ORDER.map((k) => '<button class="sortbtn" type="button" data-sort="' + k + '">' + _SORTS[k].label + '</button>').join("")
+      + '</span>'
+      + '<span class="agroup__count" data-c="' + g.st + '">0</span></div>'
+      + '<div class="active-grid" data-grid="' + g.st + '"></div></div>').join("");
+    box.querySelectorAll(".agroup").forEach((grp) => {
+      const st = grp.dataset.st;
+      grp.querySelector(".agroup__head").onclick = () => grp.classList.toggle("is-collapsed");
+      grp.querySelectorAll(".sortbtn").forEach((b) => {
+        b.onclick = (e) => { e.stopPropagation(); _sortState[st] = b.dataset.sort; _paintGroups(box); };
+      });
+    });
+  }
+
   async function loadMetrics() {
     try {
       const m = await (await fetch("/api/metrics")).json();
       const conn = $("#metrics-conn");
       const s = m.summary || {};
-      $$("[data-m]").forEach((n) => { n.textContent = m.connected ? (s[n.dataset.m] ?? 0) : "."; });
+      $$("[data-m]").forEach((n) => {
+        const v = s[n.dataset.m] ?? 0;
+        n.textContent = m.connected ? v : ".";
+        if (n.dataset.m === "printing" || n.dataset.m === "paused") {
+          n.classList.toggle("pulse", m.connected && v > 0);
+        }
+      });
       conn.textContent = m.connected ? "live" : "monitor offline";
       conn.style.color = m.connected ? "var(--ok)" : "var(--text-muted)";
       const box = $("#metrics-active");
       if (!m.connected) {
+        box.dataset.mode = "off";
         box.innerHTML = '<div class="metrics-off">Monitor offline. Start the Bambu client with the '
           + 'debug port (start-bambu-debug.bat) and keep a Dashboard window open.</div>';
         return;
       }
       const act = m.active || [];
       const cnt = $("#active-count");
+      const c = { printing: 0, paused: 0, finished: 0 };
+      act.forEach((p) => { if (c[p.status] != null) c[p.status]++; });
       if (cnt) {
-        const np = act.filter((p) => p.status === "paused").length;
-        const npr = act.length - np;
         cnt.textContent = act.length
-          ? (npr + " printing" + (np ? " · " + np + " paused" : "")) : "";
+          ? (c.printing + " printing · " + c.paused + " paused · " + c.finished + " finished") : "";
       }
-      if (!act.length) { box.innerHTML = '<div class="metrics-off">No active prints right now.</div>'; return; }
-      box.innerHTML = act.map((p) => {
-        const pct = Math.max(0, Math.min(100, p.progress || 0));
-        const paused = (p.status === "paused");
-        const right = paused ? "paused" : (_eta(p.remaining_time) || "");
-        const sub = [p.file, p.nozzle, p.bed, p.speed].filter(Boolean).map(_esc).join("  ·  ");
-        return '<div class="active-card' + (paused ? " is-paused" : "") + '">'
-          + '<div class="active-card__top">'
-          + '<span class="active-dot" aria-hidden="true"></span>'
-          + '<span class="active-card__name" title="' + _esc(p.file || p.name) + '">' + _esc(p.name) + '</span>'
-          + (p.model ? '<span class="active-card__model">' + _esc(p.model) + '</span>' : "")
-          + '<span class="active-card__eta">' + _esc(right) + '</span>'
-          + '</div>'
-          + '<div class="active-card__progress">'
-          + '<div class="active-card__bar"><div class="active-card__fill" style="width:' + pct + '%"></div></div>'
-          + '<span class="active-card__pct">' + pct + '%</span>'
-          + '</div>'
-          + (sub ? '<div class="active-card__sub" title="' + _esc(p.file || "") + '">' + sub + '</div>' : "")
-          + '</div>';
-      }).join("");
+      if (!act.length) {
+        box.dataset.mode = "off";
+        box.innerHTML = '<div class="metrics-off">No active prints right now.</div>';
+        return;
+      }
+      _ensureGroups(box);
+      _activeCache = act;
+      _paintGroups(box);
     } catch (e) { /* keep last */ }
   }
 
@@ -334,6 +407,26 @@
       setTimeout(loadStatus, 2500);
       setTimeout(() => { b.textContent = prev; b.disabled = false; }, 2600);
     };
+    // collapsible panels: click the head to fold/unfold
+    $$(".panel--collapsible > .panel__head").forEach((h) => {
+      h.onclick = () => h.parentElement.classList.toggle("is-collapsed");
+    });
+
+    // tools
+    const toolRun = async (btn, url, okText) => {
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = "...";
+      try {
+        const r = await (await fetch(url, { method: "POST" })).json();
+        btn.textContent = r.ok ? okText : (r.error || "Failed");
+        btn.classList.add(r.ok ? "ok" : "bad");
+      } catch (e) { btn.textContent = "Error"; btn.classList.add("bad"); }
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; btn.classList.remove("ok", "bad"); }, 2200);
+    };
+    $("#tool-test").onclick = () => toolRun($("#tool-test"), "/api/bot/test", "Sent");
+    $("#tool-folder").onclick = () => toolRun($("#tool-folder"), "/api/open-folder", "Opened");
+    $("#tool-reload").onclick = () => toolRun($("#tool-reload"), "/api/bot/restart", "Restarted");
+
     // theme toggle (persisted; applied early by an inline head script to avoid flash)
     const applyTheme = (t) => {
       document.documentElement.setAttribute("data-theme", t);
