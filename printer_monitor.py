@@ -480,23 +480,43 @@ class BambuPrinterMonitor:
                 if status == 'finished':
                     progress = 100
 
-                # Optional alert / reason the dashboard shows, e.g. an HMS message like
-                # "The filament on the spool holder may be tangled or stuck". We do not
-                # know its exact element, so pick the descriptive sentence in the card:
-                # a longer phrase that is not the name, file, temperatures or speed.
+                # Pause/error reason (HMS). On the card it is the red warning icon in the
+                # corner whose hover tooltip holds the text, so it lives in a title /
+                # aria-label attribute or an SVG <title>, not in the visible text. Check
+                # those first; fall back to a descriptive sentence in the visible text.
+                def _good_msg(v):
+                    v = (v or "").strip()
+                    if len(v) >= 18 and v.count(' ') >= 3 and any(c.isalpha() for c in v):
+                        return v
+                    return ""
+
                 message = ""
-                _known = {name, current_file or "", speed, nozzle_temp, bed_temp, status_text}
-                for _s in card.stripped_strings:
-                    _s = _s.strip()
-                    if not _s or _s in _known:
-                        continue
-                    if '%' in _s or _s.endswith('°C') or re.match(r'^-?\d+\s*[hm]', _s):
-                        continue
-                    if _s in ('Silent', 'Standard', 'Sport', 'Ludicrous'):
-                        continue
-                    if len(_s) >= 15 and ' ' in _s and any(c.isalpha() for c in _s):
-                        message = _s
+                for _t in card.find_all('title'):  # SVG/HTML <title> (icon tooltip)
+                    message = _good_msg(_t.get_text())
+                    if message:
                         break
+                if not message:
+                    for _el in card.find_all(True):
+                        for _attr in ('title', 'aria-label', 'data-tooltip',
+                                      'data-original-title', 'data-tip', 'alt'):
+                            message = _good_msg(_el.get(_attr))
+                            if message:
+                                break
+                        if message:
+                            break
+                if not message:
+                    _known = {name, current_file or "", speed, nozzle_temp, bed_temp, status_text}
+                    for _s in card.stripped_strings:
+                        _s = _s.strip()
+                        if not _s or _s in _known:
+                            continue
+                        if '%' in _s or _s.endswith('°C') or re.match(r'^-?\d+\s*[hm]', _s):
+                            continue
+                        if _s in ('Silent', 'Standard', 'Sport', 'Ludicrous'):
+                            continue
+                        if len(_s) >= 18 and _s.count(' ') >= 3 and any(c.isalpha() for c in _s):
+                            message = _s
+                            break
 
                 # Модель: на дашборді вона у дужках наприкінці назви, напр. "2. (A1)".
                 # Беремо вміст останніх дужок — покриває будь-яку модель
