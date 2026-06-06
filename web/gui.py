@@ -199,6 +199,14 @@ def _safe_start(mon):
         pass
 
 
+def _release_bot_lock():
+    try:
+        from telegram_bot import release_single_instance_lock
+        release_single_instance_lock()
+    except Exception:
+        pass
+
+
 def _run_app():
     """Own ONE persistent metrics monitor for the whole app life and supervise the
     in-process Telegram bot. The bot only attaches its callbacks to the shared monitor,
@@ -268,6 +276,10 @@ def _run_app():
             log.info("restarting the in-app bot...")
             time.sleep(1.0)  # let the old polling fully release before reconnecting
             continue
+        if not getattr(app.state, "bot_enabled", True):
+            log.info("in-app bot turned off")
+            _release_bot_lock()  # free the lock so the status shows the bot as off
+            return
         if crashed:
             # A flaky network can time out the first Telegram connect; retry a few
             # times before giving up so the bot recovers without a manual restart.
@@ -277,6 +289,7 @@ def _run_app():
                 time.sleep(10)
                 continue
             log.error("in-app bot failed after %d attempts; metrics keep running", fails)
+        _release_bot_lock()
         return
 
 

@@ -12,8 +12,6 @@
   <script>try{var t=localStorage.getItem("fw-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 </head>
 <body>
-  <a class="skip-link" href="#panels">Skip to settings</a>
-
   <header class="command-bar">
     <div class="brand">
       <span class="brand__mark" aria-hidden="true"></span>
@@ -43,6 +41,7 @@
     <section class="panel panel--wide" id="metrics-panel">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Farm metrics</span>
         <span class="panel__hint" id="metrics-conn" style="margin-left:auto">connecting</span>
+        <button class="btn-mini" id="bot-power" type="button" style="margin-left:8px">Stop bot</button>
         <button class="btn-mini" id="bot-restart" type="button" style="margin-left:8px">Restart bot</button>
         <button class="btn-mini" id="mon-restart" type="button" style="margin-left:8px">Restart monitor</button></div>
       <div class="metrics-grid">

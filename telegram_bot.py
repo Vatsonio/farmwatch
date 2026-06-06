@@ -1528,6 +1528,18 @@ def acquire_single_instance_lock(port: int = 48217) -> bool:
     return True
 
 
+def release_single_instance_lock():
+    """Release the lock so another bot (or this one, later) can take it. Used when the
+    GUI turns the bot off, so the status reflects that no bot is running."""
+    global _single_instance_sock
+    if _single_instance_sock is not None:
+        try:
+            _single_instance_sock.close()
+        except Exception:
+            pass
+        _single_instance_sock = None
+
+
 async def main():
     """Головна функція"""
     if not acquire_single_instance_lock():

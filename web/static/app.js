@@ -111,6 +111,11 @@
       setStat("s-bot", s.bot_running ? "running" : "stopped", s.bot_running ? "ok" : "");
       $("#bot-led").className = "led " + (s.bot_running ? "on" : "off");
       $("#bot-label").textContent = s.bot_running ? "BOT LIVE" : "BOT OFF";
+      const bp = $("#bot-power");
+      if (bp && !bp.dataset.busy) {
+        bp.dataset.running = s.bot_running ? "1" : "0";
+        bp.textContent = s.bot_running ? "Stop bot" : "Start bot";
+      }
       setStat("s-token", s.token_set ? "set" : "missing", s.token_set ? "ok" : "bad");
       setStat("s-users", s.users);
       setStat("s-groups", s.groups);
@@ -309,6 +314,15 @@
       } catch (e) { b.textContent = "Error"; }
       loadMetrics();
       setTimeout(() => { b.textContent = prev; b.disabled = false; }, 1600);
+    };
+    $("#bot-power").onclick = async () => {
+      const b = $("#bot-power");
+      const running = b.dataset.running === "1";
+      b.dataset.busy = "1"; b.disabled = true; b.textContent = running ? "Stopping" : "Starting";
+      try {
+        await fetch(running ? "/api/bot/stop" : "/api/bot/start", { method: "POST" });
+      } catch (e) {}
+      setTimeout(() => { delete b.dataset.busy; b.disabled = false; loadStatus(); }, 2500);
     };
     $("#bot-restart").onclick = async () => {
       const b = $("#bot-restart"), prev = b.textContent;

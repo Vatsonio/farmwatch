@@ -50,6 +50,7 @@ app.state.bot = None      # the tray app sets this when it runs the bot in-proce
 app.state.bot_loop = None    # the in-process bot's event loop
 app.state.bot_task = None    # the running bot.start() task (cancel to restart it)
 app.state.bot_restart = False
+app.state.bot_enabled = True  # user toggle: when False the supervisor keeps the bot off
 app.state.app_runner = None  # web.gui._run_app, to relaunch the bot supervisor
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
@@ -180,6 +181,7 @@ async def api_status():
     return {
         "version": read_version(),
         "bot_running": bot_running(),
+        "bot_enabled": bool(getattr(app.state, "bot_enabled", True)),
         "token_set": bool(tg.get("bot_token") and "PUT-YOUR" not in str(tg.get("bot_token"))),
         "users": len(tg.get("allowed_users", [])),
         "groups": len(tg.get("allowed_groups", [])),
@@ -327,6 +329,37 @@ async def api_bot_restart():
     import threading
     threading.Thread(target=runner, daemon=True).start()
     return {"ok": True, "action": "starting"}
+
+
+@app.post("/api/bot/stop")
+async def api_bot_stop():
+    """Turn the in-process bot off (it stays off until started again)."""
+    app.state.bot_enabled = False
+    loop = getattr(app.state, "bot_loop", None)
+    task = getattr(app.state, "bot_task", None)
+    if loop is not None and task is not None:
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return {"ok": True, "running": False}
+
+
+@app.post("/api/bot/start")
+async def api_bot_start():
+    """Turn the in-process bot on (starts the supervisor if needed)."""
+    app.state.bot_enabled = True
+    if getattr(app.state, "bot", None) is not None:
+        return {"ok": True, "running": True}  # already running
+    runner = getattr(app.state, "app_runner", None)
+    if runner is None:
+        return JSONResponse({"ok": False, "error": "GUI runner unavailable"}, status_code=409)
+    cfg = load_config()
+    if not appconfig.token_is_set(cfg):
+        return JSONResponse({"ok": False, "error": "no bot token set"}, status_code=409)
+    import threading
+    threading.Thread(target=runner, daemon=True).start()
+    return {"ok": True, "running": True}
 
 
 def main():
