@@ -1481,6 +1481,8 @@ def acquire_single_instance_lock(port: int = 48217) -> bool:
     значить бот уже працює. Сокет звільняється автоматично, коли процес завершується.
     """
     global _single_instance_sock
+    if _single_instance_sock is not None:
+        return True  # this process already holds the lock (e.g. GUI bot restart)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.bind(("127.0.0.1", port))
