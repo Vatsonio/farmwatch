@@ -142,7 +142,7 @@
     const name = $("#log-name").value;
     const view = $("#log-view");
     try {
-      const txt = await (await fetch("/api/logs?name=" + name + "&tail=300")).text();
+      const txt = await (await fetch("/api/logs?name=" + name + "&tail=600")).text();
       view.textContent = txt || "(empty)";
       $("#log-meta").textContent = txt ? txt.split("\n").length + " lines" : "";
       view.scrollTop = view.scrollHeight;

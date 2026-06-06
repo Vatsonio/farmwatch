@@ -10,7 +10,7 @@
   --surface:#13161c;
   --raised:#181c23;
   --sunken:#0a0c10;
-  --glass:rgba(17,20,26,0.86);
+  --glass:rgba(16,19,26,0.98);
 
   --hairline:rgba(255,255,255,0.08);
   --hairline-strong:rgba(255,255,255,0.15);
@@ -69,7 +69,7 @@ body{
    command bar
    ============================================================ */
 .command-bar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:var(--sp-4);height:54px;padding:0 var(--sp-5);
-  background:var(--glass);backdrop-filter:blur(10px);border-bottom:1px solid var(--hairline);}
+  background:var(--glass);border-bottom:1px solid var(--hairline);}
 .brand{display:flex;align-items:center;gap:10px;}
 .brand__mark{width:14px;height:14px;border-radius:3px;background:var(--accent);position:relative;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.25);}
 .brand__mark::after{content:"";position:absolute;inset:4px;border-radius:1px;background:var(--bg);}
@@ -161,7 +161,7 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
    save bar
    ============================================================ */
 .savebar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-5);
-  background:var(--glass);backdrop-filter:blur(12px);border-top:1px solid var(--hairline);transform:translateY(110%);transition:transform var(--dur) var(--ease);}
+  background:var(--glass);border-top:1px solid var(--hairline);transform:translateY(110%);transition:transform var(--dur) var(--ease);}
 .savebar.show{transform:none;}
 .savebar__msg{font-size:13px;color:var(--text-secondary);}
 .savebar__msg b{color:var(--accent);font-weight:600;}

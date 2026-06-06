@@ -70,7 +70,6 @@ def _start_monitor():
 def main():
     appconfig.ensure_config()
     port = _free_port()
-    app.state.monitor = _start_monitor()
     # use_colors=False + log_config=None: in a --windowed frozen exe sys.stdout is
     # None, and uvicorn's default log formatter calls sys.stdout.isatty() and crashes.
     threading.Thread(
@@ -128,6 +127,10 @@ def main():
 
     def on_started():
         threading.Thread(target=run_tray, daemon=True).start()
+        # Connect the metrics monitor in the background so the window opens instantly
+        # instead of blocking ~7s on the CDP connect during startup.
+        threading.Thread(target=lambda: setattr(app.state, "monitor", _start_monitor()),
+                         daemon=True).start()
 
     webview.start(on_started)
     # webview.start returns once the window is destroyed (Quit). Force a full process
