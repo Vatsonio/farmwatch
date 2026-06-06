@@ -170,6 +170,7 @@ def _run_app():
     import asyncio
 
     log = logging.getLogger("gui")
+    fails = 0
     while True:
         cfg = appconfig.load_config()
         if not appconfig.token_is_set(cfg):
@@ -205,11 +206,13 @@ def _run_app():
 
         task = loop.create_task(bot.start())
         app.state.bot_task = task
+        crashed = False
         try:
             loop.run_until_complete(task)  # blocks until the bot stops or is cancelled
         except asyncio.CancelledError:
             pass
         except Exception as e:
+            crashed = True
             log.error("in-app bot stopped: %s", e)
         finally:
             try:
@@ -224,10 +227,21 @@ def _run_app():
             app.state.bot_loop = None
             app.state.bot_task = None
 
-        if not app.state.bot_restart:
-            return
-        log.info("restarting the in-app bot...")
-        time.sleep(1.0)  # let the old polling fully release before reconnecting
+        if app.state.bot_restart:
+            fails = 0
+            log.info("restarting the in-app bot...")
+            time.sleep(1.0)  # let the old polling fully release before reconnecting
+            continue
+        if crashed:
+            # A flaky network can time out the first Telegram connect; retry a few
+            # times before giving up so the bot recovers without a manual restart.
+            fails += 1
+            if fails <= 3:
+                log.warning("in-app bot start failed (%d/3); retrying in 10s", fails)
+                time.sleep(10)
+                continue
+            log.error("in-app bot failed after %d attempts; running metrics only", fails)
+        return  # clean stop or out of retries -> metrics only fallback
 
     # No token, or the bot cannot run: keep just the monitor for metrics.
     try:
