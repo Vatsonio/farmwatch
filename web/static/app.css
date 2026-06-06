@@ -135,6 +135,10 @@ body{
 .layout{max-width:var(--maxw);margin:var(--sp-4) auto 0;padding:0 var(--sp-5);display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:var(--sp-4);align-items:start;}
 .panel{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-md);box-shadow:var(--shadow);padding:var(--sp-4) var(--sp-5) var(--sp-5);}
 .panel--wide{grid-column:1 / -1;}
+/* order: Farm metrics, then Diagnostics (debug/logs), then the settings panels */
+#metrics-panel{order:1;}
+#diag-panel{order:2;}
+.panel--collapsible{order:3;}
 .panel__head{display:flex;align-items:center;gap:10px;margin-bottom:var(--sp-3);padding-bottom:var(--sp-3);border-bottom:1px solid var(--hairline);}
 .panel__title{font-weight:600;font-size:13px;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-primary);}
 /* collapsible panels: click the head to fold/unfold */
@@ -144,6 +148,10 @@ body{
 .panel--collapsible.is-collapsed > .panel__head{margin-bottom:0;padding-bottom:0;border-bottom:none;}
 .panel--collapsible.is-collapsed > .panel__head::after{transform:rotate(-45deg);}
 .panel--collapsible.is-collapsed > :not(.panel__head){display:none;}
+/* expand animation: the body fades and slides in when a block is opened */
+@keyframes fw-reveal{from{opacity:0;transform:translateY(-7px);}to{opacity:1;transform:translateY(0);}}
+.panel--collapsible:not(.is-collapsed) > :not(.panel__head){animation:fw-reveal var(--dur) var(--ease);}
+.agroup:not(.is-collapsed) .active-grid{animation:fw-reveal var(--dur) var(--ease);}
 .panel__mark{width:3px;height:13px;background:var(--accent);border-radius:2px;}
 .panel__hint{margin-left:auto;font-size:11px;color:var(--text-muted);}
 
@@ -290,4 +298,4 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
   .field{flex-direction:column;align-items:stretch;gap:7px;}
   .field__label{flex:none;}
 }
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.001ms!important;}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.001ms!important;animation-duration:.001ms!important;}}
