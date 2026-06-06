@@ -47,6 +47,10 @@ LOG_FILES = {
 app = FastAPI(title="farmwatch settings")
 app.state.monitor = None  # the tray app (web.gui) sets this for live farm metrics
 app.state.bot = None      # the tray app sets this when it runs the bot in-process
+app.state.bot_loop = None    # the in-process bot's event loop
+app.state.bot_task = None    # the running bot.start() task (cancel to restart it)
+app.state.bot_restart = False
+app.state.app_runner = None  # web.gui._run_app, to relaunch the bot supervisor
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
@@ -192,6 +196,12 @@ async def api_status():
 async def api_logs(name: str = "monitor", tail: int = 200):
     path = LOG_FILES.get(name)
     if not path or not path.exists():
+        if name == "debug":
+            return PlainTextResponse(
+                "(verbose monitor log is empty)\n\n"
+                "Turn on Debug logging in the Monitor settings to capture the detailed, "
+                "step by step monitor trace here. The normal Monitor log stays concise; "
+                "this one adds the low level scraping and printer disappearance detail.")
         return PlainTextResponse("(log file not found)")
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -230,11 +240,13 @@ async def api_metrics():
             if str(p.status).lower() == "printing":
                 active.append({
                     "name": p.name,
+                    "model": getattr(p, "model", ""),
                     "progress": p.progress,
                     "remaining_time": p.remaining_time,
                     "file": p.current_file,
                     "nozzle": p.nozzle_temp,
                     "bed": p.bed_temp,
+                    "speed": getattr(p, "speed", ""),
                 })
         active.sort(key=lambda x: (x["progress"] is None, -(x["progress"] or 0)))
         return {"connected": True, "summary": m.get_summary(), "active": active}
@@ -273,6 +285,36 @@ async def api_monitor_restart():
     app.state.monitor = mon
     return {"ok": bool(ok), "running": getattr(mon, "running", False),
             "printers": len(mon.get_all_printers())}
+
+
+@app.post("/api/bot/restart")
+async def api_bot_restart():
+    """Restart the Telegram bot running in-process (reloads config: token, proxy,
+    allowed users, notifications). If it is not running yet, start the supervisor."""
+    loop = getattr(app.state, "bot_loop", None)
+    task = getattr(app.state, "bot_task", None)
+    if loop is not None and task is not None:
+        app.state.bot_restart = True
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        return {"ok": True, "action": "restarting"}
+
+    # Not running in-process: try to (re)launch the bot supervisor.
+    runner = getattr(app.state, "app_runner", None)
+    if runner is None:
+        return JSONResponse(
+            {"ok": False, "error": "bot is not running in this process"},
+            status_code=409,
+        )
+    cfg = load_config()
+    if not appconfig.token_is_set(cfg):
+        return JSONResponse(
+            {"ok": False, "error": "no bot token set"}, status_code=409)
+    import threading
+    threading.Thread(target=runner, daemon=True).start()
+    return {"ok": True, "action": "starting"}
 
 
 def main():

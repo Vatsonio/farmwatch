@@ -41,6 +41,7 @@
     <section class="panel panel--wide" id="metrics-panel">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Farm metrics</span>
         <span class="panel__hint" id="metrics-conn" style="margin-left:auto">connecting</span>
+        <button class="btn-mini" id="bot-restart" type="button" style="margin-left:8px">Restart bot</button>
         <button class="btn-mini" id="mon-restart" type="button" style="margin-left:8px">Restart monitor</button></div>
       <div class="metrics-grid">
         <div class="metric"><span class="metric__label">Total</span><span class="metric__val num" data-m="total">0</span></div>
@@ -143,7 +144,7 @@
 
       <div class="subhead">Logs</div>
       <div class="log-toolbar">
-        <select id="log-name" class="input-narrow"><option value="monitor">printer_monitor</option><option value="bot">telegram_bot</option><option value="debug">monitor debug</option></select>
+        <select id="log-name" class="input-narrow"><option value="monitor">Monitor</option><option value="bot">Bot</option><option value="debug">Monitor (verbose)</option></select>
         <button class="btn-mini" id="log-refresh" type="button">Refresh</button>
         <button class="btn-mini" id="log-copy" type="button">Copy</button>
         <label class="log-live"><input type="checkbox" id="log-live" checked> Live</label>

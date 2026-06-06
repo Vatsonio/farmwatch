@@ -73,9 +73,56 @@ def _setup_file_logging():
             fh = logging.FileHandler(base / fname, encoding="utf-8")
         except Exception:
             continue
+        # Pin INFO so that when Debug logging flips the monitor logger to DEBUG, the
+        # normal log stays operational only; the verbose DEBUG lines go to the
+        # separate printer_monitor.debug.log (otherwise the two logs are identical).
+        fh.setLevel(logging.INFO)
         fh.setFormatter(fmt)
         fh._fw = fname
         lg.addHandler(fh)
+
+
+def _promote_tray_icon():
+    """Windows 11 hides new tray icons in the overflow flyout. Flip IsPromoted=1 for
+    this executable under NotifyIconSettings so the icon shows in the tray itself.
+    Best effort: takes effect from the next launch if the entry is created late."""
+    if os.name != "nt":
+        return
+    try:
+        import sys
+        import winreg
+    except Exception:
+        return
+    exe = os.path.normcase(os.path.abspath(sys.executable))
+    try:
+        root = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                              r"Control Panel\NotifyIconSettings", 0,
+                              winreg.KEY_ALL_ACCESS)
+    except OSError:
+        return
+    try:
+        i = 0
+        while True:
+            try:
+                sub = winreg.EnumKey(root, i)
+            except OSError:
+                break
+            i += 1
+            try:
+                sk = winreg.OpenKey(root, sub, 0, winreg.KEY_ALL_ACCESS)
+            except OSError:
+                continue
+            try:
+                try:
+                    path, _ = winreg.QueryValueEx(sk, "ExecutablePath")
+                except FileNotFoundError:
+                    path = ""
+                if path and os.path.normcase(os.path.abspath(path)) == exe:
+                    winreg.SetValueEx(sk, "IsPromoted", 0, winreg.REG_DWORD, 1)
+            finally:
+                winreg.CloseKey(sk)
+    finally:
+        winreg.CloseKey(root)
 
 
 def _free_port() -> int:
@@ -116,37 +163,73 @@ def _start_monitor():
 
 
 def _run_app():
-    """Run the Telegram bot in-process so the panel reflects it, sharing its monitor
-    for live metrics. With no token (or if the bot fails) fall back to a standalone
-    monitor so metrics still work."""
-    cfg = appconfig.load_config()
-    if appconfig.token_is_set(cfg):
+    """Supervise the in-process Telegram bot so the panel reflects and controls it,
+    sharing its monitor for live metrics. The Restart bot button cancels the running
+    bot; this loop then tears it down and starts a fresh one. With no token (or if the
+    bot cannot run) it falls back to a metrics only monitor."""
+    import asyncio
+
+    log = logging.getLogger("gui")
+    while True:
+        cfg = appconfig.load_config()
+        if not appconfig.token_is_set(cfg):
+            break  # no token -> metrics only monitor (below)
         try:
-            import asyncio
             from telegram_bot import BambuTelegramBot, acquire_single_instance_lock
             # Hold the same single instance lock the console bot uses. If a console
-            # bot is already running, skip the in-app bot (it keeps the metrics
-            # monitor) so two bots never poll Telegram at once.
+            # bot is already running, skip the in-app bot (keep metrics only) so two
+            # bots never poll Telegram at once.
             if not acquire_single_instance_lock():
-                raise RuntimeError("another farmwatch bot already holds the lock")
-            bot = BambuTelegramBot()
-            app.state.bot = bot
-
-            def _share():
-                for _ in range(240):
-                    m = getattr(bot, "monitor", None)
-                    if m is not None:
-                        app.state.monitor = m
-                        return
-                    time.sleep(0.5)
-
-            threading.Thread(target=_share, daemon=True).start()
-            asyncio.run(bot.start())  # blocks this thread (runs the bot)
-            return
+                log.warning("another farmwatch bot holds the lock; running metrics only")
+                break
         except Exception as e:
-            import logging
-            logging.getLogger("gui").error("in-app bot failed: %s", e)
-    # No token, or the bot crashed: run just the monitor for metrics.
+            log.error("cannot start in-app bot: %s", e)
+            break
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        bot = BambuTelegramBot()
+        app.state.bot = bot
+        app.state.bot_loop = loop
+        app.state.bot_restart = False
+
+        def _share(b=bot):
+            for _ in range(240):
+                m = getattr(b, "monitor", None)
+                if m is not None:
+                    app.state.monitor = m
+                    return
+                time.sleep(0.5)
+
+        threading.Thread(target=_share, daemon=True).start()
+
+        task = loop.create_task(bot.start())
+        app.state.bot_task = task
+        try:
+            loop.run_until_complete(task)  # blocks until the bot stops or is cancelled
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log.error("in-app bot stopped: %s", e)
+        finally:
+            try:
+                loop.run_until_complete(bot.stop())
+            except Exception:
+                pass
+            try:
+                loop.close()
+            except Exception:
+                pass
+            app.state.bot = None
+            app.state.bot_loop = None
+            app.state.bot_task = None
+
+        if not app.state.bot_restart:
+            return
+        log.info("restarting the in-app bot...")
+        time.sleep(1.0)  # let the old polling fully release before reconnecting
+
+    # No token, or the bot cannot run: keep just the monitor for metrics.
     try:
         if app.state.monitor is None:
             app.state.monitor = _start_monitor()
@@ -156,6 +239,7 @@ def _run_app():
 
 def main():
     _setup_file_logging()
+    app.state.app_runner = _run_app  # lets /api/bot/restart relaunch the bot supervisor
     appconfig.ensure_config()
     port = _free_port()
     # use_colors=False + log_config=None: in a --windowed frozen exe sys.stdout is
@@ -204,6 +288,11 @@ def main():
     window.events.closing += on_closing
 
     def run_tray():
+        def _setup(icon):
+            icon.visible = True
+            # Ask Windows to keep the icon out of the hidden overflow.
+            threading.Thread(target=_promote_tray_icon, daemon=True).start()
+
         icon = pystray.Icon(
             "farmwatch", make_tray_image(64), "farmwatch",
             menu=pystray.Menu(
@@ -211,7 +300,7 @@ def main():
                 pystray.MenuItem("Quit", on_quit),
             ),
         )
-        icon.run()
+        icon.run(setup=_setup)
 
     def on_started():
         threading.Thread(target=run_tray, daemon=True).start()

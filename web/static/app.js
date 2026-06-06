@@ -184,10 +184,26 @@
       if (!act.length) { box.innerHTML = '<div class="metrics-off">No active prints right now.</div>'; return; }
       box.innerHTML = act.map((p) => {
         const pct = Math.max(0, Math.min(100, p.progress || 0));
-        return '<div class="active-row"><span class="active-row__name" title="' + _esc(p.file || "") + '">'
-          + _esc(p.name) + '</span>'
+        const eta = _eta(p.remaining_time);
+        const kv = (k, v) => v ? '<span class="kv"><span class="kv__k">' + k + '</span><span class="kv__v">' + _esc(v) + '</span></span>' : "";
+        const stats = [
+          p.file ? '<span class="kv kv--file"><span class="kv__k">file</span><span class="kv__v" title="' + _esc(p.file) + '">' + _esc(p.file) + '</span></span>' : "",
+          kv("nozzle", p.nozzle),
+          kv("bed", p.bed),
+          kv("speed", p.speed),
+        ].join("");
+        return '<div class="active-row">'
+          + '<div class="active-row__top">'
+          + '<span class="active-row__name">' + _esc(p.name) + '</span>'
+          + (p.model ? '<span class="active-row__model">' + _esc(p.model) + '</span>' : "")
+          + '<span class="active-row__eta">' + (eta ? _esc(eta) : "") + '</span>'
+          + '</div>'
+          + '<div class="active-row__progress">'
           + '<div class="active-row__bar"><div class="active-row__fill" style="width:' + pct + '%"></div></div>'
-          + '<span class="active-row__meta">' + pct + '%   ' + _esc(_eta(p.remaining_time)) + '</span></div>';
+          + '<span class="active-row__pct">' + pct + '%</span>'
+          + '</div>'
+          + (stats ? '<div class="active-row__stats">' + stats + '</div>' : "")
+          + '</div>';
       }).join("");
     } catch (e) { /* keep last */ }
   }
@@ -291,6 +307,16 @@
       } catch (e) { b.textContent = "Error"; }
       loadMetrics();
       setTimeout(() => { b.textContent = prev; b.disabled = false; }, 1600);
+    };
+    $("#bot-restart").onclick = async () => {
+      const b = $("#bot-restart"), prev = b.textContent;
+      b.disabled = true; b.textContent = "Restarting";
+      try {
+        const r = await (await fetch("/api/bot/restart", { method: "POST" })).json();
+        b.textContent = r.ok ? (r.action === "starting" ? "Starting" : "Restarted") : (r.error || "Failed");
+      } catch (e) { b.textContent = "Error"; }
+      setTimeout(loadStatus, 2500);
+      setTimeout(() => { b.textContent = prev; b.disabled = false; }, 2600);
     };
     window.addEventListener("beforeunload", (e) => {
       if (JSON.stringify(cfg) !== original) { e.preventDefault(); e.returnValue = ""; }
