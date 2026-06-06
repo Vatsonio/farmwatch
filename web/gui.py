@@ -31,21 +31,22 @@ from printer_monitor import BambuPrinterMonitor, BAMBU_EXE_PATH
 WINDOW_BG = "#0c0e12"
 
 
+# The main window is kept at module level on purpose: storing it as an attribute on
+# the js_api object makes pywebview try to serialize the whole WebView2 window across
+# threads on every bridge sync, which floods COM errors and freezes the window.
+_main_window = None
+
+
 class _JsApi:
     """Exposed to the page as window.pywebview.api for native window control."""
 
-    def __init__(self):
-        self.window = None
-        self._fs = False
-
     def toggle_fullscreen(self):
         try:
-            if self.window:
-                self.window.toggle_fullscreen()
-                self._fs = not self._fs
+            if _main_window is not None:
+                _main_window.toggle_fullscreen()
         except Exception:
             pass
-        return self._fs
+        return True
 
 
 def _setup_file_logging():
@@ -310,12 +311,12 @@ def main():
 
     # JS bridge: the browser Fullscreen API is a no-op inside the pywebview window,
     # so the page toggles the native window fullscreen through this api instead.
-    api = _JsApi()
+    global _main_window
     window = webview.create_window(
         f"FarmWatch v{__version__}", url, width=1240, height=880, min_size=(900, 640),
-        background_color=WINDOW_BG, hidden=True, js_api=api,
+        background_color=WINDOW_BG, hidden=True, js_api=_JsApi(),
     )
-    api.window = window
+    _main_window = window
 
     state = {"quitting": False}
 
