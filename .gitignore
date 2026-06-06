@@ -11,6 +11,13 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# PyInstaller build artifacts (the exe is built by CI / locally, not committed)
+build/
+dist/
+*.spec
+# Generated app icon (CI regenerates it from web/icon.py during the build)
+farmwatch.ico
+
 # Logs
 *.log
 

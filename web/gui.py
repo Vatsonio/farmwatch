@@ -12,6 +12,7 @@ Run:
     python -m web.gui
 """
 
+import logging
 import os
 import socket
 import threading
@@ -28,6 +29,53 @@ from web.server import app
 from printer_monitor import BambuPrinterMonitor, BAMBU_EXE_PATH
 
 WINDOW_BG = "#0c0e12"
+
+
+def _setup_file_logging():
+    """Make the in-process bot and monitor write their log files next to the exe.
+
+    Both modules call logging.basicConfig with a relative path, but in the GUI
+    process logging is already configured (so their basicConfig is a no-op) and the
+    cwd may differ from the exe. We chdir to the data dir and attach a dedicated
+    file handler to each logger so the panel's log viewer and diagnostics see them.
+    """
+    base = appconfig.base_dir()
+    try:
+        os.chdir(base)  # so any other relative-path handlers also land next to the exe
+    except Exception:
+        pass
+    # The modules' basicConfig may have put a file handler on the root logger with a
+    # relative path; drop it so logs only go where the panel reads them.
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        if isinstance(h, logging.FileHandler):
+            root.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    for name, fname in (("telegram_bot", "telegram_bot.log"),
+                        ("printer_monitor", "printer_monitor.log")):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.INFO)
+        # Keep each component's lines in its own file only: propagate=False stops them
+        # bubbling to a root file handler (which would duplicate every line).
+        lg.propagate = False
+        for h in list(lg.handlers):
+            if isinstance(h, logging.FileHandler):
+                lg.removeHandler(h)
+                try:
+                    h.close()
+                except Exception:
+                    pass
+        try:
+            fh = logging.FileHandler(base / fname, encoding="utf-8")
+        except Exception:
+            continue
+        fh.setFormatter(fmt)
+        fh._fw = fname
+        lg.addHandler(fh)
 
 
 def _free_port() -> int:
@@ -67,7 +115,47 @@ def _start_monitor():
     return mon
 
 
+def _run_app():
+    """Run the Telegram bot in-process so the panel reflects it, sharing its monitor
+    for live metrics. With no token (or if the bot fails) fall back to a standalone
+    monitor so metrics still work."""
+    cfg = appconfig.load_config()
+    if appconfig.token_is_set(cfg):
+        try:
+            import asyncio
+            from telegram_bot import BambuTelegramBot, acquire_single_instance_lock
+            # Hold the same single instance lock the console bot uses. If a console
+            # bot is already running, skip the in-app bot (it keeps the metrics
+            # monitor) so two bots never poll Telegram at once.
+            if not acquire_single_instance_lock():
+                raise RuntimeError("another farmwatch bot already holds the lock")
+            bot = BambuTelegramBot()
+            app.state.bot = bot
+
+            def _share():
+                for _ in range(240):
+                    m = getattr(bot, "monitor", None)
+                    if m is not None:
+                        app.state.monitor = m
+                        return
+                    time.sleep(0.5)
+
+            threading.Thread(target=_share, daemon=True).start()
+            asyncio.run(bot.start())  # blocks this thread (runs the bot)
+            return
+        except Exception as e:
+            import logging
+            logging.getLogger("gui").error("in-app bot failed: %s", e)
+    # No token, or the bot crashed: run just the monitor for metrics.
+    try:
+        if app.state.monitor is None:
+            app.state.monitor = _start_monitor()
+    except Exception:
+        pass
+
+
 def main():
+    _setup_file_logging()
     appconfig.ensure_config()
     port = _free_port()
     # use_colors=False + log_config=None: in a --windowed frozen exe sys.stdout is
@@ -127,10 +215,9 @@ def main():
 
     def on_started():
         threading.Thread(target=run_tray, daemon=True).start()
-        # Connect the metrics monitor in the background so the window opens instantly
-        # instead of blocking ~7s on the CDP connect during startup.
-        threading.Thread(target=lambda: setattr(app.state, "monitor", _start_monitor()),
-                         daemon=True).start()
+        # Start the bot + monitor in the background so the window opens instantly
+        # instead of blocking on the Telegram and CDP connects during startup.
+        threading.Thread(target=_run_app, daemon=True).start()
 
     webview.start(on_started)
     # webview.start returns once the window is destroyed (Quit). Force a full process

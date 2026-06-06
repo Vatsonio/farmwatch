@@ -91,6 +91,7 @@ jobs:
             --exclude-module PyQt5 `
             --exclude-module PyQt6 `
             --exclude-module gi `
+            --collect-submodules telegram `
             web/gui.py
 
       - name: Assemble portable package

@@ -146,7 +146,8 @@
         <select id="log-name" class="input-narrow"><option value="monitor">printer_monitor</option><option value="bot">telegram_bot</option><option value="debug">monitor debug</option></select>
         <button class="btn-mini" id="log-refresh" type="button">Refresh</button>
         <button class="btn-mini" id="log-copy" type="button">Copy</button>
-        <span class="panel__hint" id="log-meta"></span>
+        <label class="log-live"><input type="checkbox" id="log-live" checked> Live</label>
+        <span class="panel__hint" id="log-meta" style="margin-left:auto"></span>
       </div>
       <pre class="log-view" id="log-view">.</pre>
     </section>

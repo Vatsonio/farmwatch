@@ -138,14 +138,20 @@
       }
     } catch (e) {}
   }
-  async function loadLog() {
+  async function loadLog(forceBottom) {
     const name = $("#log-name").value;
     const view = $("#log-view");
+    // Do not yank the view while the user is selecting text inside it.
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && view.contains(sel.anchorNode)) return;
     try {
+      const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 60;
       const txt = await (await fetch("/api/logs?name=" + name + "&tail=600")).text();
-      view.textContent = txt || "(empty)";
-      $("#log-meta").textContent = txt ? txt.split("\n").length + " lines" : "";
-      view.scrollTop = view.scrollHeight;
+      if (txt !== view.textContent) {
+        view.textContent = txt || "(empty)";
+        $("#log-meta").textContent = txt ? (txt.split("\n").length + " lines") : "";
+      }
+      if (forceBottom || atBottom) view.scrollTop = view.scrollHeight;
     } catch (e) { view.textContent = "(could not load log)"; }
   }
 
@@ -272,8 +278,8 @@
     };
     $("#save").onclick = save;
     $("#revert").onclick = revert;
-    $("#log-refresh").onclick = loadLog;
-    $("#log-name").onchange = loadLog;
+    $("#log-refresh").onclick = () => loadLog(true);
+    $("#log-name").onchange = () => loadLog(true);
     $("#diag-copy").onclick = () => copyBtn($("#diag-copy"), $("#diag-list").innerText);
     $("#log-copy").onclick = () => copyBtn($("#log-copy"), $("#log-view").innerText);
     $("#mon-restart").onclick = async () => {
@@ -293,9 +299,11 @@
     loadStatus();
     loadMetrics();
     loadDiagnostics();
-    loadLog();
+    loadLog(true);
     setInterval(loadStatus, 5000);
     setInterval(loadMetrics, 4000);
+    setInterval(loadDiagnostics, 10000);
+    setInterval(() => { const lv = $("#log-live"); if (lv && lv.checked) loadLog(); }, 3000);
     tick(); setInterval(tick, 1000);
   }
 

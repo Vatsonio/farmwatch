@@ -155,7 +155,9 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .diag-line{padding:6px 10px;border-left:2px solid var(--warn);background:var(--sunken);border-radius:0 var(--r-sm) var(--r-sm) 0;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;}
 .diag-empty{color:var(--text-muted);font-size:12px;padding:var(--sp-3);}
 .log-toolbar{display:flex;gap:var(--sp-2);align-items:center;margin-bottom:var(--sp-2);}
-.log-view{background:var(--sunken);border:1px solid var(--hairline);border-radius:var(--r-sm);padding:var(--sp-3) var(--sp-4);max-height:300px;overflow:auto;font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;}
+.log-view{background:var(--sunken);border:1px solid var(--hairline);border-radius:var(--r-sm);padding:var(--sp-3) var(--sp-4);min-height:340px;height:62vh;max-height:none;overflow:auto;resize:vertical;font-family:var(--font-mono);font-size:11px;line-height:1.55;color:var(--text-secondary);white-space:pre;word-break:normal;overflow-x:auto;}
+.log-live{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted);}
+.log-live input{width:auto;}
 
 /* ============================================================
    save bar

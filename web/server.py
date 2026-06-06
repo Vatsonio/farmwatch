@@ -46,6 +46,7 @@ LOG_FILES = {
 
 app = FastAPI(title="farmwatch settings")
 app.state.monitor = None  # the tray app (web.gui) sets this for live farm metrics
+app.state.bot = None      # the tray app sets this when it runs the bot in-process
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
