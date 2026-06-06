@@ -31,6 +31,23 @@ from printer_monitor import BambuPrinterMonitor, BAMBU_EXE_PATH
 WINDOW_BG = "#0c0e12"
 
 
+class _JsApi:
+    """Exposed to the page as window.pywebview.api for native window control."""
+
+    def __init__(self):
+        self.window = None
+        self._fs = False
+
+    def toggle_fullscreen(self):
+        try:
+            if self.window:
+                self.window.toggle_fullscreen()
+                self._fs = not self._fs
+        except Exception:
+            pass
+        return self._fs
+
+
 def _setup_file_logging():
     """Make the in-process bot and monitor write their log files next to the exe.
 
@@ -162,19 +179,48 @@ def _start_monitor():
     return mon
 
 
+def _build_app_monitor():
+    """The persistent metrics monitor, honouring the config (incl. auto_launch)."""
+    cfg = appconfig.load_config().get("monitor", {})
+    return BambuPrinterMonitor(
+        debug_port=cfg.get("debug_port", 9222),
+        update_interval=cfg.get("update_interval", 30),
+        exe_path=cfg.get("exe_path", BAMBU_EXE_PATH),
+        auto_launch=bool(cfg.get("auto_launch", True)),
+        debug_logging=bool(cfg.get("debug_logging", False)),
+        debug_dump_dir=cfg.get("debug_dump_dir", "debug_dumps"),
+    )
+
+
+def _safe_start(mon):
+    try:
+        mon.start()
+    except Exception:
+        pass
+
+
 def _run_app():
-    """Supervise the in-process Telegram bot so the panel reflects and controls it,
-    sharing its monitor for live metrics. The Restart bot button cancels the running
-    bot; this loop then tears it down and starts a fresh one. With no token (or if the
-    bot cannot run) it falls back to a metrics only monitor."""
+    """Own ONE persistent metrics monitor for the whole app life and supervise the
+    in-process Telegram bot. The bot only attaches its callbacks to the shared monitor,
+    so restarting or crashing the bot never stops the monitor (no metrics churn). The
+    Restart bot button cancels the bot; this loop then starts a fresh one on the same
+    monitor. With no token (or if the bot cannot run) the monitor still serves metrics."""
     import asyncio
 
     log = logging.getLogger("gui")
+
+    # Create and start the single shared monitor once. It outlives every bot restart.
+    if app.state.monitor is None:
+        mon = _build_app_monitor()
+        app.state.monitor = mon
+        threading.Thread(target=lambda: _safe_start(mon), daemon=True).start()
+    shared = app.state.monitor
+
     fails = 0
     while True:
         cfg = appconfig.load_config()
         if not appconfig.token_is_set(cfg):
-            break  # no token -> metrics only monitor (below)
+            return  # no token: keep the metrics monitor, no bot
         try:
             from telegram_bot import BambuTelegramBot, acquire_single_instance_lock
             # Hold the same single instance lock the console bot uses. If a console
@@ -182,27 +228,17 @@ def _run_app():
             # bots never poll Telegram at once.
             if not acquire_single_instance_lock():
                 log.warning("another farmwatch bot holds the lock; running metrics only")
-                break
+                return
         except Exception as e:
             log.error("cannot start in-app bot: %s", e)
-            break
+            return
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        bot = BambuTelegramBot()
+        bot = BambuTelegramBot(shared_monitor=shared)
         app.state.bot = bot
         app.state.bot_loop = loop
         app.state.bot_restart = False
-
-        def _share(b=bot):
-            for _ in range(240):
-                m = getattr(b, "monitor", None)
-                if m is not None:
-                    app.state.monitor = m
-                    return
-                time.sleep(0.5)
-
-        threading.Thread(target=_share, daemon=True).start()
 
         task = loop.create_task(bot.start())
         app.state.bot_task = task
@@ -216,7 +252,7 @@ def _run_app():
             log.error("in-app bot stopped: %s", e)
         finally:
             try:
-                loop.run_until_complete(bot.stop())
+                loop.run_until_complete(bot.stop())  # detaches from the shared monitor
             except Exception:
                 pass
             try:
@@ -240,15 +276,8 @@ def _run_app():
                 log.warning("in-app bot start failed (%d/3); retrying in 10s", fails)
                 time.sleep(10)
                 continue
-            log.error("in-app bot failed after %d attempts; running metrics only", fails)
-        return  # clean stop or out of retries -> metrics only fallback
-
-    # No token, or the bot cannot run: keep just the monitor for metrics.
-    try:
-        if app.state.monitor is None:
-            app.state.monitor = _start_monitor()
-    except Exception:
-        pass
+            log.error("in-app bot failed after %d attempts; metrics keep running", fails)
+        return
 
 
 def main():
@@ -266,10 +295,14 @@ def main():
     _wait_up(port)
     url = f"http://127.0.0.1:{port}/"
 
+    # JS bridge: the browser Fullscreen API is a no-op inside the pywebview window,
+    # so the page toggles the native window fullscreen through this api instead.
+    api = _JsApi()
     window = webview.create_window(
         f"FarmWatch v{__version__}", url, width=1240, height=880, min_size=(900, 640),
-        background_color=WINDOW_BG, hidden=True,
+        background_color=WINDOW_BG, hidden=True, js_api=api,
     )
+    api.window = window
 
     state = {"quitting": False}
 

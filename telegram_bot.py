@@ -65,14 +65,18 @@ for _h in logging.getLogger().handlers:
 class BambuTelegramBot:
     """Telegram бот для управління моніторингом принтерів"""
     
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, shared_monitor=None):
         """
         Args:
             config_path: Шлях до config.json (типово поруч з exe / у поточній папці)
+            shared_monitor: монітор, яким володіє хтось інший (GUI). Якщо переданий,
+                бот лише чіпляє свої callback'и і НЕ запускає/не зупиняє його, тож
+                перезапуск бота не уриває метрики.
         """
         self.config_path = Path(config_path) if config_path else appconfig.config_path()
         self.config = self.load_config()
-        self.monitor: Optional[BambuPrinterMonitor] = None
+        self._shared_monitor = shared_monitor
+        self.monitor: Optional[BambuPrinterMonitor] = shared_monitor
         self.application: Optional[Application] = None
         self.monitor_task: Optional[asyncio.Task] = None
         self.event_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -325,17 +329,26 @@ class BambuTelegramBot:
             return
         
         await update.message.reply_text("🔄 Перезапускаю моніторинг...")
-        
-        # Зупиняємо старий моніторинг
-        if self.monitor and self.monitor.running:
-            self.monitor.stop()
-        
+
         # Перезавантажуємо конфіг
         self.config = self.load_config()
-        
-        # Запускаємо новий
-        success = await self.start_monitor()
-        
+
+        # Перепідключаємо наявний монітор на місці (той самий об'єкт), щоб не
+        # плодити паралельні монітори і не лишати спільний монітор зупиненим.
+        loop = asyncio.get_event_loop()
+        mon = self.monitor
+        success = False
+        try:
+            if mon is not None:
+                await loop.run_in_executor(None, mon.stop)
+                success = await loop.run_in_executor(None, mon.start)
+                self._attach_monitor_callbacks(mon)
+            else:
+                success = await self.start_monitor()
+        except Exception as e:
+            logger.error(f"❌ Помилка перезапуску моніторингу: {e}")
+            success = False
+
         if success:
             await update.message.reply_text("✅ Моніторинг успішно перезапущено!")
         else:
@@ -1253,11 +1266,36 @@ class BambuTelegramBot:
     
     # === ЗАПУСК ТА ЗУПИНКА ===
     
+    def _attach_monitor_callbacks(self, monitor):
+        """Прив'язати callback'и бота до монітора (через run_coroutine_threadsafe,
+        бо монітор кличе їх із власного sync-потоку)."""
+        monitor.on_printer_status_change = lambda n, o, p: self._schedule_callback(self.on_status_change(n, o, p))
+        monitor.on_print_complete = lambda n, p: self._schedule_callback(self.on_print_complete(n, p))
+        monitor.on_printer_online = lambda n, p: self._schedule_callback(self.on_printer_online(n, p))
+        monitor.on_printer_offline = lambda n, p: self._schedule_callback(self.on_printer_offline(n, p))
+        monitor.on_update_complete = lambda: self._schedule_callback(self.update_status_messages())
+
+    def _detach_monitor_callbacks(self, monitor):
+        """Зняти callback'и, щоб монітор більше не кликав у (можливо мертвий) loop бота."""
+        monitor.on_printer_status_change = None
+        monitor.on_print_complete = None
+        monitor.on_printer_online = None
+        monitor.on_printer_offline = None
+        monitor.on_update_complete = None
+
     async def start_monitor(self) -> bool:
         """Запуск моніторингу принтерів"""
         try:
+            # Спільний монітор (GUI): лише чіпляємо callback'и, життям монітора
+            # керує власник, тож перезапуск бота не уриває метрики.
+            if self._shared_monitor is not None:
+                self.monitor = self._shared_monitor
+                self._attach_monitor_callbacks(self.monitor)
+                logger.info("✅ Моніторинг (спільний) приєднано")
+                return True
+
             monitor_config = self.config.get('monitor', {})
-            
+
             self.monitor = BambuPrinterMonitor(
                 debug_port=monitor_config.get('debug_port', 9222),
                 update_interval=monitor_config.get('update_interval', 30),
@@ -1266,28 +1304,21 @@ class BambuTelegramBot:
                 debug_logging=monitor_config.get('debug_logging', False),
                 debug_dump_dir=monitor_config.get('debug_dump_dir', 'debug_dumps')
             )
-            
-            # Встановлення callback'ів
-            # Використовуємо run_coroutine_threadsafe для виклику async функцій з sync потоку
-            self.monitor.on_printer_status_change = lambda n, o, p: self._schedule_callback(self.on_status_change(n, o, p))
-            self.monitor.on_print_complete = lambda n, p: self._schedule_callback(self.on_print_complete(n, p))
-            self.monitor.on_printer_online = lambda n, p: self._schedule_callback(self.on_printer_online(n, p))
-            self.monitor.on_printer_offline = lambda n, p: self._schedule_callback(self.on_printer_offline(n, p))
-            # Callback для оновлення статусних повідомлень після кожного update
-            self.monitor.on_update_complete = lambda: self._schedule_callback(self.update_status_messages())
-            
+
+            self._attach_monitor_callbacks(self.monitor)
+
             # Запуск у окремому потоці
             success = await asyncio.get_event_loop().run_in_executor(
                 None, self.monitor.start
             )
-            
+
             if success:
                 logger.info("✅ Моніторинг принтерів запущено")
                 return True
             else:
                 logger.error("❌ Не вдалося запустити моніторинг")
                 return False
-                
+
         except Exception as e:
             logger.error(f"❌ Помилка запуску моніторингу: {e}")
             return False
@@ -1452,12 +1483,16 @@ class BambuTelegramBot:
         """Зупинка бота"""
         logger.info("⏹️ Зупинка бота...")
         
-        # Зупинка моніторингу
+        # Моніторинг: спільний монітор лишаємо живим (метрики не уриваємо), лише
+        # знімаємо callback'и. Власний монітор зупиняємо.
         if self.monitor:
-            await asyncio.get_event_loop().run_in_executor(
-                None, self.monitor.stop
-            )
-        
+            if self._shared_monitor is not None:
+                self._detach_monitor_callbacks(self.monitor)
+            else:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self.monitor.stop
+                )
+
         # Зупинка бота
         if self.application:
             await self.application.updater.stop()

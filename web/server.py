@@ -272,21 +272,29 @@ def _build_monitor():
 
 @app.post("/api/monitor/restart")
 async def api_monitor_restart():
-    """Stop and reconnect the live metrics monitor (recovers a stale or 0 card state)."""
+    """Reconnect the live metrics monitor (recovers a stale or 0 card state).
+
+    Reconnect the SAME monitor object in place rather than building a new one, so the
+    in-process bot keeps its reference and we never end up with two monitors competing
+    for the Bambu debug port.
+    """
     import asyncio
     loop = asyncio.get_running_loop()
-    old = app.state.monitor
-    if old is not None:
+    mon = app.state.monitor
+    if mon is None:
+        mon = _build_monitor()
         try:
-            await loop.run_in_executor(None, old.stop)
-        except Exception:
-            pass
-    mon = _build_monitor()
+            ok = await loop.run_in_executor(None, mon.start)
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        app.state.monitor = mon
+        return {"ok": bool(ok), "running": getattr(mon, "running", False),
+                "printers": len(mon.get_all_printers())}
     try:
-        ok = await loop.run_in_executor(None, mon.start)  # start connects; off the loop
+        await loop.run_in_executor(None, mon.stop)
+        ok = await loop.run_in_executor(None, mon.start)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-    app.state.monitor = mon
     return {"ok": bool(ok), "running": getattr(mon, "running", False),
             "printers": len(mon.get_all_printers())}
 

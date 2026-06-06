@@ -101,14 +101,13 @@
   function setStat(id, text, cls) {
     const el = $("#" + id);
     el.textContent = text;
-    el.className = "stat__val" + (cls ? " " + cls : "") + (id === "s-version" || id === "s-users" || id === "s-groups" || id === "s-dumps" ? " num" : "");
+    el.className = "stat__val" + (cls ? " " + cls : "") + (id === "s-users" || id === "s-groups" || id === "s-dumps" ? " num" : "");
   }
   async function loadStatus() {
     try {
       const s = await (await fetch("/api/status")).json();
       $("#ver").textContent = "v" + s.version;
       document.title = "FarmWatch v" + s.version;
-      setStat("s-version", s.version);
       setStat("s-bot", s.bot_running ? "running" : "stopped", s.bot_running ? "ok" : "");
       $("#bot-led").className = "led " + (s.bot_running ? "on" : "off");
       $("#bot-label").textContent = s.bot_running ? "BOT LIVE" : "BOT OFF";
@@ -335,14 +334,24 @@
       applyTheme(theme);
     };
 
-    // fullscreen toggle
+    // fullscreen toggle. Inside the pywebview window the browser Fullscreen API does
+    // nothing, so toggle the native window via the exposed pywebview api; in a plain
+    // browser (dev) fall back to the Fullscreen API.
     const fsBtn = $("#fs-toggle");
-    const syncFs = () => { fsBtn.textContent = document.fullscreenElement ? "🗗" : "⛶"; };
+    let fsOn = false;
+    const hasPyWebview = () => window.pywebview && window.pywebview.api && window.pywebview.api.toggle_fullscreen;
     fsBtn.onclick = () => {
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-      else document.documentElement.requestFullscreen().catch(() => {});
+      if (hasPyWebview()) {
+        window.pywebview.api.toggle_fullscreen();
+        fsOn = !fsOn;
+        fsBtn.textContent = fsOn ? "🗗" : "⛶";
+      } else if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
     };
-    document.addEventListener("fullscreenchange", syncFs);
+    document.addEventListener("fullscreenchange", () => { fsBtn.textContent = document.fullscreenElement ? "🗗" : "⛶"; });
 
     window.addEventListener("beforeunload", (e) => {
       if (JSON.stringify(cfg) !== original) { e.preventDefault(); e.returnValue = ""; }
