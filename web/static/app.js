@@ -192,6 +192,7 @@
       + '</div>'
       + (p.file ? '<div class="active-card__file" title="' + _esc(p.file) + '">' + _esc(p.file) + '</div>' : "")
       + (spec ? '<div class="active-card__spec">' + spec + '</div>' : "")
+      + (p.message ? '<div class="active-card__msg" title="' + _esc(p.message) + '">' + _esc(p.message) + '</div>' : "")
       + '</div>';
   }
 
@@ -429,6 +430,18 @@
     $("#tool-test").onclick = () => toolRun($("#tool-test"), "/api/bot/test", "Sent");
     $("#tool-folder").onclick = () => toolRun($("#tool-folder"), "/api/open-folder", "Opened");
     $("#tool-reload").onclick = () => toolRun($("#tool-reload"), "/api/bot/restart", "Restarted");
+
+    // clicking the Printing / Paused / Finished counters jumps to that section
+    ["printing", "paused", "finished"].forEach((k) => {
+      const cell = $('[data-m="' + k + '"]')?.closest(".metric");
+      if (!cell) return;
+      cell.classList.add("metric--jump");
+      cell.title = "Show " + k;
+      cell.onclick = () => {
+        const g = $('.agroup[data-st="' + k + '"]');
+        if (g) { g.classList.remove("is-collapsed"); g.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      };
+    });
 
     // theme toggle (persisted; applied early by an inline head script to avoid flash)
     const applyTheme = (t) => {

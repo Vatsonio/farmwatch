@@ -47,6 +47,7 @@ class PrinterStatus:
     speed: str  # "Standard"
     online: bool
     last_update: datetime
+    message: str = ""  # optional alert / reason shown on the card (e.g. HMS warning)
     
     def to_dict(self) -> dict:
         """Конвертація у словник"""
@@ -479,6 +480,24 @@ class BambuPrinterMonitor:
                 if status == 'finished':
                     progress = 100
 
+                # Optional alert / reason the dashboard shows, e.g. an HMS message like
+                # "The filament on the spool holder may be tangled or stuck". We do not
+                # know its exact element, so pick the descriptive sentence in the card:
+                # a longer phrase that is not the name, file, temperatures or speed.
+                message = ""
+                _known = {name, current_file or "", speed, nozzle_temp, bed_temp, status_text}
+                for _s in card.stripped_strings:
+                    _s = _s.strip()
+                    if not _s or _s in _known:
+                        continue
+                    if '%' in _s or _s.endswith('°C') or re.match(r'^-?\d+\s*[hm]', _s):
+                        continue
+                    if _s in ('Silent', 'Standard', 'Sport', 'Ludicrous'):
+                        continue
+                    if len(_s) >= 15 and ' ' in _s and any(c.isalpha() for c in _s):
+                        message = _s
+                        break
+
                 # Модель: на дашборді вона у дужках наприкінці назви, напр. "2. (A1)".
                 # Беремо вміст останніх дужок — покриває будь-яку модель
                 # (A1, A1 mini, X1, X1C, X1E, P1P, P1S, H2D тощо).
@@ -498,7 +517,8 @@ class BambuPrinterMonitor:
                     bed_temp=bed_temp,
                     speed=speed,
                     online=online,
-                    last_update=datetime.now()
+                    last_update=datetime.now(),
+                    message=message,
                 )
                 
                 printers.append(printer)

@@ -251,6 +251,7 @@ async def api_metrics():
                     "nozzle": p.nozzle_temp,
                     "bed": p.bed_temp,
                     "speed": getattr(p, "speed", ""),
+                    "message": getattr(p, "message", "") or "",
                 })
         # order: printing, then paused, then finished; within each highest progress first
         _order = {"printing": 0, "paused": 1, "finished": 2}
