@@ -176,7 +176,9 @@
     const finished = (p.status === "finished");
     const cls = paused ? " is-paused" : (finished ? " is-finished" : "");
     const right = finished ? "done" : (paused ? "paused" : (_eta(p.remaining_time) || ""));
-    const sub = [p.file, p.nozzle, p.bed, p.speed].filter(Boolean).map(_esc).join("  ·  ");
+    // file on its own truncating line; temps + speed on a second line that always
+    // stays visible no matter how long the file name is.
+    const spec = [p.nozzle, p.bed, p.speed].filter(Boolean).map(_esc).join("  ·  ");
     return '<div class="active-card' + cls + '">'
       + '<div class="active-card__top">'
       + '<span class="active-dot" aria-hidden="true"></span>'
@@ -188,7 +190,8 @@
       + '<div class="active-card__bar"><div class="active-card__fill" style="width:' + pct + '%"></div></div>'
       + '<span class="active-card__pct">' + pct + '%</span>'
       + '</div>'
-      + (sub ? '<div class="active-card__sub" title="' + _esc(p.file || "") + '">' + sub + '</div>' : "")
+      + (p.file ? '<div class="active-card__file" title="' + _esc(p.file) + '">' + _esc(p.file) + '</div>' : "")
+      + (spec ? '<div class="active-card__spec">' + spec + '</div>' : "")
       + '</div>';
   }
 
