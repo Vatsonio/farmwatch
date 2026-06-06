@@ -171,9 +171,9 @@
     return o ? (+o[1]) + "m left" : "";
   }
   function _activeCard(p) {
-    const pct = Math.max(0, Math.min(100, p.progress || 0));
     const paused = (p.status === "paused");
     const finished = (p.status === "finished");
+    const pct = finished ? 100 : Math.max(0, Math.min(100, p.progress || 0));
     const cls = paused ? " is-paused" : (finished ? " is-finished" : "");
     const right = finished ? "done" : (paused ? "paused" : (_eta(p.remaining_time) || ""));
     // file on its own truncating line; temps + speed on a second line that always

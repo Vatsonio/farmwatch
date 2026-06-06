@@ -474,6 +474,11 @@ class BambuPrinterMonitor:
                 else:
                     status = 'idle'
 
+                # A finished print is 100% by definition; the status line often shows
+                # "Finished" without a percent, which would otherwise read as 0%.
+                if status == 'finished':
+                    progress = 100
+
                 # Модель: на дашборді вона у дужках наприкінці назви, напр. "2. (A1)".
                 # Беремо вміст останніх дужок — покриває будь-яку модель
                 # (A1, A1 mini, X1, X1C, X1E, P1P, P1S, H2D тощо).
