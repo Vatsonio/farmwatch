@@ -32,6 +32,24 @@ logger = logging.getLogger(__name__)
 # Шлях до Bambu Farm Manager Client
 BAMBU_EXE_PATH = r"C:\Program Files\Bambu Farm Manager Client\Bambu Farm Manager Client.exe"
 
+# Mapping the farm server's devices2 JSON fields to farmwatch's vocabulary.
+# gcode_state -> our status (the client reports the print state precisely here).
+_GCODE_STATE = {
+    "RUNNING": "printing", "PREPARE": "printing", "PREPARING": "printing",
+    "SLICING": "printing", "RESUMING": "printing",
+    "PAUSE": "paused", "PAUSED": "paused", "PAUSING": "paused",
+    "FINISH": "finished", "FINISHED": "finished",
+    "FAILED": "stopped", "STOPPED": "stopped",
+    "IDLE": "idle",
+}
+# spd_lvl -> speed label
+_SPEED_LVL = {1: "Silent", 2: "Standard", 3: "Sport", 4: "Ludicrous"}
+# dev_model code -> friendly model (fallback when the name has no parenthesised model)
+_MODEL_CODES = {
+    "N1": "A1 mini", "N2S": "A1", "C11": "P1P", "C12": "P1S",
+    "C13": "X1", "BL-P001": "X1C", "O1": "H2D",
+}
+
 
 @dataclass
 class PrinterStatus:
@@ -48,6 +66,9 @@ class PrinterStatus:
     online: bool
     last_update: datetime
     message: str = ""  # optional alert / reason shown on the card (e.g. HMS warning)
+    serial: str = ""             # dev_id from the JSON API
+    layer: int = 0               # current layer (JSON only)
+    total_layers: int = 0        # total layers (JSON only)
     
     def to_dict(self) -> dict:
         """Конвертація у словник"""
@@ -301,7 +322,13 @@ class BambuPrinterMonitor:
             self._send_command(1, "DOM.enable")
             self._send_command(2, "Page.enable")
             self._send_command(3, "Runtime.enable")
-            
+            # Network: щоб читати JSON (devices2), який клієнт сам тягне з ферми —
+            # це точніше і надійніше за парсинг DOM.
+            try:
+                self._send_command(7, "Network.enable")
+            except Exception as e:
+                logger.debug(f"Network.enable не вдався: {e}")
+
             logger.info("✓ WebSocket підключено")
             
             # Очікування завантаження сторінки (як в export_dashboard.py)
@@ -351,6 +378,186 @@ class BambuPrinterMonitor:
         
         return response
     
+    # ========================= JSON API (devices2) =========================
+    def _fetch_devices_json(self, timeout: float = 8.0) -> Optional[list]:
+        """Дочекатись наступної відповіді /devices2, яку клієнт сам тягне з ферми,
+        і повернути список девайсів. Читаємо ws напряму — безпечно, бо цикл монітора
+        однопотоковий. Жодних токенів і зовнішніх викликів: лише тіло відповіді, яке
+        клієнт уже отримав."""
+        ws = self.ws_connection
+        if not ws:
+            return None
+        deadline = time.monotonic() + timeout
+        req_id = None
+        try:
+            ws.settimeout(1.0)
+            # 1) чекаємо свіжу відповідь devices2
+            while time.monotonic() < deadline and req_id is None:
+                try:
+                    msg = json.loads(ws.recv())
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if msg.get("method") == "Network.responseReceived":
+                    url = msg.get("params", {}).get("response", {}).get("url", "")
+                    if "devices2" in url:
+                        req_id = msg["params"]["requestId"]
+            if req_id is None:
+                return None
+            # 2) дочекатись поки тіло догрузиться
+            while time.monotonic() < deadline:
+                try:
+                    msg = json.loads(ws.recv())
+                except websocket.WebSocketTimeoutException:
+                    break
+                if (msg.get("method") == "Network.loadingFinished"
+                        and msg.get("params", {}).get("requestId") == req_id):
+                    break
+        finally:
+            try:
+                ws.settimeout(15)
+            except Exception:
+                pass
+        # 3) забираємо тіло
+        try:
+            resp = self._send_command(120, "Network.getResponseBody", {"requestId": req_id})
+        except Exception as e:
+            logger.debug(f"getResponseBody не вдався: {e}")
+            return None
+        raw = resp.get("result", {}).get("body")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return None
+        devices = data.get("devices")
+        return devices if isinstance(devices, list) else None
+
+    @staticmethod
+    def _model_from_name(name: str) -> str:
+        m = re.search(r'\(([^)]{1,20})\)\s*$', name or "")
+        return m.group(1).strip() if m else ""
+
+    @staticmethod
+    def _fmt_remaining(minutes) -> Optional[str]:
+        try:
+            m = int(minutes)
+        except (TypeError, ValueError):
+            return None
+        if m <= 0:
+            return None
+        h, mi = divmod(m, 60)
+        return f"-{h}h{mi}m" if h else f"-{mi}m"
+
+    @staticmethod
+    def _fmt_temp(actual, target) -> str:
+        def _n(v):
+            try:
+                return str(round(float(v)))
+            except (TypeError, ValueError):
+                return "0"
+        return f"{_n(actual)}/{_n(target)}°C"
+
+    def _hms_message(self, rs: dict) -> str:
+        """Причина паузи/помилки з полів hms[] / print_error.
+
+        hms entries виглядають як {attr, code}; канонічний HMS-ідентифікатор —
+        HEX16 (XXXX_XXXX_XXXX_XXXX). Точний локалізований текст резолвиться через
+        i18n клієнта; поки що віддаємо код, а сирі hms логуємо для зведення мапи.
+        """
+        hms = rs.get("hms") or []
+        if hms:
+            if self.debug_logging:
+                logger.debug("HMS raw: %s", hms)
+            codes = []
+            for h in hms:
+                try:
+                    attr = int(h.get("attr", 0))
+                    code = int(h.get("code", 0))
+                    codes.append("%04X_%04X_%04X_%04X" % (
+                        attr >> 16 & 0xFFFF, attr & 0xFFFF, code >> 16 & 0xFFFF, code & 0xFFFF))
+                except Exception:
+                    continue
+            if codes:
+                return "HMS " + ", ".join(codes)
+        try:
+            err = int(rs.get("print_error", 0) or 0)
+        except (TypeError, ValueError):
+            err = 0
+        if err:
+            return "Print error 0x%08X" % (err & 0xFFFFFFFF)
+        return ""
+
+    def _parse_devices_json(self, devices: list) -> List[PrinterStatus]:
+        """Перетворити devices2 JSON у список PrinterStatus (точне джерело даних)."""
+        out = []
+        parsed_ok = 0
+        for d in devices:
+            try:
+                rs = d.get("report_status", {}) or {}
+                name = (d.get("name") or d.get("dev_name") or d.get("dev_id") or "").strip()
+                if not name:
+                    continue
+                online = bool(d.get("online", True))
+                gstate = str(rs.get("gcode_state", "") or "").upper()
+
+                try:
+                    progress = int(rs.get("mc_percent") or 0)
+                except (TypeError, ValueError):
+                    progress = 0
+                remaining_time = self._fmt_remaining(rs.get("mc_remaining_time"))
+
+                status = _GCODE_STATE.get(gstate)
+                if status is None:
+                    status = "printing" if (progress > 0 and remaining_time) else "idle"
+                if not online:
+                    status = "offline"
+                if status == "finished":
+                    progress = 100
+
+                model = self._model_from_name(name) or _MODEL_CODES.get(
+                    str(d.get("dev_model", "")), str(d.get("dev_model", "") or ""))
+                try:
+                    spd = int(rs.get("spd_lvl") or 2)
+                except (TypeError, ValueError):
+                    spd = 2
+                speed = _SPEED_LVL.get(spd, "Standard")
+
+                current_file = (rs.get("subtask_name") or rs.get("gcode_file") or "").strip() or None
+                try:
+                    layer = int(rs.get("layer_num") or 0)
+                    total_layers = int(rs.get("total_layer_num") or 0)
+                except (TypeError, ValueError):
+                    layer = total_layers = 0
+
+                out.append(PrinterStatus(
+                    name=name,
+                    model=model,
+                    status=status,
+                    progress=progress,
+                    current_file=current_file,
+                    remaining_time=remaining_time,
+                    nozzle_temp=self._fmt_temp(rs.get("nozzle_temper"), rs.get("nozzle_target_temper")),
+                    bed_temp=self._fmt_temp(rs.get("bed_temper"), rs.get("bed_target_temper")),
+                    speed=speed,
+                    online=online,
+                    last_update=datetime.now(),
+                    message=self._hms_message(rs),
+                    serial=str(d.get("dev_id", "") or ""),
+                    layer=layer,
+                    total_layers=total_layers,
+                ))
+                parsed_ok += 1
+            except Exception as e:
+                logger.debug(f"devices2: помилка девайса: {e}")
+                continue
+        self._last_parse_stats = {
+            'cards_found': len(devices), 'parsed_ok': parsed_ok,
+            'skipped_no_name': len(devices) - parsed_ok, 'skipped_no_status': 0,
+            'parse_errors': 0, 'skipped_names': [],
+        }
+        return out
+
     def parse_printers_from_html(self, html: str) -> List[PrinterStatus]:
         """Парсинг принтерів з HTML"""
         soup = BeautifulSoup(html, 'html.parser')
@@ -558,11 +765,27 @@ class BambuPrinterMonitor:
         return printers
     
     def update_printers(self) -> bool:
-        """Оновлення статусу всіх принтерів"""
+        """Оновлення статусу всіх принтерів.
+
+        Основне джерело — JSON (devices2), який клієнт сам тягне з ферми: точні
+        статуси, прогрес, температури, причини пауз. Якщо JSON недоступний (інша
+        версія клієнта/нема трафіку) — фолбек на парсинг DOM #/monitor.
+        """
         try:
-            # Отримуємо HTML як в export_dashboard.py - через DOM API
+            devices = None
+            try:
+                devices = self._fetch_devices_json()
+            except Exception as e:
+                logger.debug(f"devices2 JSON недоступний, фолбек на DOM: {e}")
+
+            if devices is not None:
+                new_printers = self._parse_devices_json(devices)
+                logger.debug("✓ дані з devices2 JSON: %d принтерів", len(new_printers))
+                return self._finish_update(new_printers, None)
+
+            # ---- Фолбек: парсинг DOM (#/monitor) ----
             html = None
-            
+
             # Спосіб 1: DOM.getDocument + DOM.getOuterHTML
             try:
                 doc = self._send_command(5, "DOM.getDocument", {"depth": -1, "pierce": True})
@@ -615,38 +838,39 @@ class BambuPrinterMonitor:
             if not html:
                 logger.error("❌ Не вдалося отримати HTML жодним способом")
                 return False
-            
+
             new_printers = self.parse_printers_from_html(html)
+            return self._finish_update(new_printers, html)
 
-            # Карток нема взагалі -> найімовірніше клієнт пішов з роуту дашборда
-            # (#/monitor). Повертаємо його, щоб наступний цикл був уже з даними.
-            if not new_printers and self._last_parse_stats.get('cards_found', 0) == 0:
-                self._ensure_dashboard()
-
-            # Діагностика зникнення принтерів (до застосування оновлень).
-            # Ніколи не має ламати моніторинг — тому в try.
-            try:
-                self._diagnose_cycle(new_printers, html)
-            except Exception as e:
-                logger.error(f"Помилка діагностики циклу: {e}")
-
-            # Порівнюємо зі старими даними; зміни статусу приймаємо лише після
-            # підтвердження кілька зчитувань поспіль — щоб одноразові "блимання"
-            # дашборда не давали хибних offline/online/finished сповіщень.
-            for new_printer in new_printers:
-                self._apply_printer_update(new_printer)
-
-            logger.info(f"✓ Оновлено статус {len(new_printers)} принтерів")
-            
-            # Викликаємо callback після завершення оновлення
-            if self.on_update_complete:
-                self.on_update_complete()
-            
-            return True
-            
         except Exception as e:
             logger.error(f"Помилка оновлення принтерів: {e}")
             return False
+
+    def _finish_update(self, new_printers: List[PrinterStatus], html: Optional[str]) -> bool:
+        """Спільний хвіст оновлення для обох джерел (JSON і DOM): діагностика
+        зникнень, антидребезг статусів, callback."""
+        # Принтерів нема взагалі -> найімовірніше клієнт пішов з роуту дашборда
+        # (#/monitor). Повертаємо його, щоб наступний цикл був уже з даними.
+        if not new_printers and self._last_parse_stats.get('cards_found', 0) == 0:
+            self._ensure_dashboard()
+
+        # Діагностика зникнення принтерів — ніколи не має ламати моніторинг.
+        try:
+            self._diagnose_cycle(new_printers, html)
+        except Exception as e:
+            logger.error(f"Помилка діагностики циклу: {e}")
+
+        # Зміни статусу приймаємо лише після підтвердження кілька зчитувань поспіль,
+        # щоб одноразові блимання не давали хибних сповіщень.
+        for new_printer in new_printers:
+            self._apply_printer_update(new_printer)
+
+        logger.info(f"✓ Оновлено статус {len(new_printers)} принтерів")
+
+        if self.on_update_complete:
+            self.on_update_complete()
+
+        return True
 
     def _apply_printer_update(self, new_printer: PrinterStatus):
         """Прийняти оновлення одного принтера з антидребезгом статусу.
