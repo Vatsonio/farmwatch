@@ -45,13 +45,17 @@
         <button class="btn-mini" id="bot-restart" type="button" style="margin-left:8px">Restart bot</button>
         <button class="btn-mini" id="mon-restart" type="button" style="margin-left:8px">Restart monitor</button></div>
       <div class="metrics-grid">
-        <div class="metric"><span class="metric__label">Total</span><span class="metric__val num" data-m="total">0</span></div>
-        <div class="metric"><span class="metric__label">Online</span><span class="metric__val num" data-m="online">0</span></div>
-        <div class="metric"><span class="metric__label">Printing</span><span class="metric__val num" data-m="printing">0</span></div>
-        <div class="metric"><span class="metric__label">Paused</span><span class="metric__val num" data-m="paused">0</span></div>
-        <div class="metric"><span class="metric__label">Finished</span><span class="metric__val num" data-m="finished">0</span></div>
-        <div class="metric"><span class="metric__label">Idle</span><span class="metric__val num" data-m="idle">0</span></div>
-        <div class="metric"><span class="metric__label">Offline</span><span class="metric__val num" data-m="offline">0</span></div>
+        <div class="metrics-row metrics-row--primary">
+          <div class="metric metric--printing"><span class="metric__val num" data-m="printing">0</span><span class="metric__label">Printing</span></div>
+          <div class="metric metric--paused"><span class="metric__val num" data-m="paused">0</span><span class="metric__label">Paused</span></div>
+          <div class="metric metric--offline"><span class="metric__val num" data-m="offline">0</span><span class="metric__label">Offline</span></div>
+        </div>
+        <div class="metrics-row metrics-row--context">
+          <div class="metric metric--context"><span class="metric__val num" data-m="total">0</span><span class="metric__label">Total</span></div>
+          <div class="metric metric--context"><span class="metric__val num" data-m="online">0</span><span class="metric__label">Online</span></div>
+          <div class="metric metric--context metric--finished"><span class="metric__val num" data-m="finished">0</span><span class="metric__label">Finished</span></div>
+          <div class="metric metric--context"><span class="metric__val num" data-m="idle">0</span><span class="metric__label">Idle</span></div>
+        </div>
       </div>
       <div class="subhead">Active prints <span class="subhead__count" id="active-count"></span></div>
       <div id="metrics-active"><div class="metrics-off">connecting to the monitor...</div></div>

@@ -226,22 +226,52 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 .saved-flash{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(6px);background:var(--raised);border:1px solid var(--ok);color:var(--ok);font-weight:600;font-size:12px;padding:9px 18px;border-radius:var(--r-full);opacity:0;transition:opacity var(--dur),transform var(--dur);pointer-events:none;}
 .saved-flash.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
-/* ---- farm metrics ---- */
-.metrics-grid{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:var(--sp-3);}
-.metric{flex:1 1 120px;display:flex;flex-direction:row;align-items:baseline;justify-content:center;gap:7px;padding:10px 13px;background:var(--sunken);border:1px solid var(--hairline);border-radius:var(--r-sm);}
-.metric__label{order:1;font-weight:600;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);}
-.metric__val{order:0;font-family:var(--font-mono);font-weight:600;font-size:18px;color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:1;}
-.metric--jump{cursor:pointer;transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease);}
-.metric--jump:hover{border-color:var(--hairline-strong);background:var(--raised);}
-/* status colours for the farm counters */
+/* ---- farm metrics: two tiers — big critical counts + a context strip ---- */
+.metrics-grid{display:flex;flex-direction:column;gap:var(--sp-2);margin-bottom:var(--sp-3);}
+.metrics-row{display:flex;gap:var(--sp-2);}
+.metric{position:relative;display:flex;flex-direction:column;justify-content:center;gap:4px;background:var(--sunken);border:1px solid var(--hairline);border-radius:var(--r-sm);overflow:hidden;transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease);}
+.metric::before{content:"";position:absolute;top:0;left:0;bottom:0;width:3px;background:var(--hairline-strong);}
+/* primary (critical) row: Printing / Paused / Offline, big numbers */
+.metrics-row--primary .metric{flex:1 1 0;min-width:0;padding:var(--sp-3) var(--sp-4) var(--sp-3) calc(var(--sp-4) + 3px);}
+.metrics-row--primary .metric__val{font-family:var(--font-mono);font-size:38px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1;color:var(--text-primary);transition:color var(--dur) var(--ease);}
+.metrics-row--primary .metric__label{font-weight:600;font-size:var(--fs-label);letter-spacing:0.09em;text-transform:uppercase;color:var(--text-muted);line-height:1;}
+/* context row: Total / Online / Finished / Idle, smaller inline */
+.metrics-row--context .metric{flex:1 1 0;min-width:0;flex-direction:row;align-items:baseline;gap:var(--sp-2);padding:var(--sp-2) var(--sp-3) var(--sp-2) calc(var(--sp-3) + 3px);}
+.metrics-row--context .metric__val{font-family:var(--font-mono);font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1;color:var(--text-secondary);transition:color var(--dur) var(--ease);}
+.metrics-row--context .metric__label{font-weight:600;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);line-height:1;}
+/* accent bars per state */
+.metric--printing::before{background:var(--ok);}
+.metric--paused::before{background:var(--bad);}
+.metric--offline::before{background:var(--bad);}
+.metric--finished::before{background:var(--ok);}
+/* number colours */
+.metric__val[data-m="total"]{color:var(--text-primary);}
 .metric__val[data-m="online"]{color:var(--ok);}
 .metric__val[data-m="printing"]{color:var(--ok);}
 .metric__val[data-m="paused"]{color:var(--bad);}
 .metric__val[data-m="finished"]{color:var(--ok);}
 .metric__val[data-m="idle"]{color:var(--warn);}
 .metric__val[data-m="offline"]{color:var(--bad);}
+/* tints when a critical count is non-zero (color-mix keeps both themes correct) */
+.metric--printing[data-nonzero]{background:color-mix(in srgb,var(--ok) 8%,var(--sunken));border-color:color-mix(in srgb,var(--ok) 28%,var(--hairline));}
+.metric--paused[data-nonzero]{background:color-mix(in srgb,var(--bad) 11%,var(--sunken));border-color:color-mix(in srgb,var(--bad) 34%,var(--hairline));}
+.metric--offline[data-nonzero]{background:color-mix(in srgb,var(--bad) 11%,var(--sunken));border-color:color-mix(in srgb,var(--bad) 30%,var(--hairline));}
+/* dim zero context tiles */
+.metric--context[data-zero]{opacity:0.5;}
+.metric--context[data-zero]::before{background:transparent;}
+/* jump affordance (added by JS to printing/paused/finished tiles) */
+.metric--jump{cursor:pointer;}
+.metric--jump:hover{border-color:var(--hairline-strong);background:var(--raised);}
+.metric--paused[data-nonzero]:hover{border-color:color-mix(in srgb,var(--bad) 50%,var(--hairline));}
+.metric--printing[data-nonzero]:hover{border-color:color-mix(in srgb,var(--ok) 44%,var(--hairline));}
 .metric__val.pulse{animation:metric-pulse 1.5s ease-in-out infinite;}
 @keyframes metric-pulse{0%,100%{opacity:1;}50%{opacity:0.38;}}
+@media (max-width:760px){
+  .metrics-row--primary{flex-direction:column;}
+  .metrics-row--primary .metric{flex:0 0 auto;flex-direction:row;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4) var(--sp-3) calc(var(--sp-4) + 3px);}
+  .metrics-row--primary .metric__val{font-size:30px;min-width:46px;}
+  .metrics-row--context{display:grid;grid-template-columns:1fr 1fr;}
+}
 .subhead__count{font-weight:500;font-size:10px;letter-spacing:0.04em;color:var(--text-muted);text-transform:none;margin-left:6px;}
 /* Active prints: a dense responsive grid that stays contained when there are many
    printers (multiple columns on a wide window, capped height with its own scroll). */

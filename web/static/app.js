@@ -263,6 +263,19 @@
         if (n.dataset.m === "printing" || n.dataset.m === "paused") {
           n.classList.toggle("pulse", m.connected && v > 0);
         }
+        // emphasise the parent tile: tint critical states when non-zero,
+        // dim context tiles when zero
+        const tile = n.closest(".metric");
+        if (!tile) return;
+        const nonzero = m.connected && v > 0;
+        if (tile.classList.contains("metric--printing") ||
+            tile.classList.contains("metric--paused") ||
+            tile.classList.contains("metric--offline")) {
+          tile.toggleAttribute("data-nonzero", nonzero);
+        }
+        if (tile.classList.contains("metric--context")) {
+          tile.toggleAttribute("data-zero", m.connected && v === 0);
+        }
       });
       conn.textContent = m.connected ? "live" : "monitor offline";
       conn.style.color = m.connected ? "var(--ok)" : "var(--text-muted)";
