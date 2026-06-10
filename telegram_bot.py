@@ -533,6 +533,13 @@ class BambuTelegramBot:
             # Принтери
             elif data == "printers_refresh":
                 await self.show_printers_list(query, refresh=True)
+            # Керування: підтвердження (ctlyes_*) перевіряємо ПЕРШИМ, щоб не сплутати з ctl_*
+            elif data.startswith("ctlyes_"):
+                _, action, idx = data.split("_", 2)
+                await self._do_control(query, action, int(idx))
+            elif data.startswith("ctl_"):
+                _, action, idx = data.split("_", 2)
+                await self._confirm_control(query, action, int(idx))
             elif data.startswith("printer_"):
                 await query.answer()
                 printer_index = int(data.replace("printer_", ""))
@@ -819,13 +826,81 @@ class BambuTelegramBot:
         msg += f"\n━━━━━━━━\n"
         msg += f"🕐 {datetime.now().strftime('%H:%M:%S')}"
         
-        keyboard = [
-            [InlineKeyboardButton("🔄 Оновити", callback_data=f"printer_{printer_index}")],
-            [InlineKeyboardButton("◀️ До списку", callback_data="printers_refresh")]
-        ]
+        keyboard = []
+        # Кнопки керування — лише для адміна і лише у відповідному стані принтера.
+        st = printer.status.lower()
+        if self.is_admin(query.from_user.id):
+            if st == 'printing':
+                keyboard.append([
+                    InlineKeyboardButton("⏸ Пауза", callback_data=f"ctl_pause_{printer_index}"),
+                    InlineKeyboardButton("⏹ Стоп", callback_data=f"ctl_stop_{printer_index}"),
+                ])
+            elif st == 'paused':
+                keyboard.append([
+                    InlineKeyboardButton("▶️ Відновити", callback_data=f"ctl_resume_{printer_index}"),
+                    InlineKeyboardButton("⏹ Стоп", callback_data=f"ctl_stop_{printer_index}"),
+                ])
+        keyboard.append([InlineKeyboardButton("🔄 Оновити", callback_data=f"printer_{printer_index}")])
+        keyboard.append([InlineKeyboardButton("◀️ До списку", callback_data="printers_refresh")])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         await query.edit_message_text(msg, reply_markup=reply_markup)
+
+    async def _confirm_control(self, query, action: str, idx: int):
+        """Крок підтвердження перед керуванням принтером (тільки адмін)."""
+        if not self.is_admin(query.from_user.id):
+            await query.answer("Лише адмін може керувати принтерами", show_alert=True)
+            return
+        if not self.monitor or not self.monitor.running:
+            await query.answer("Моніторинг не запущений", show_alert=True)
+            return
+        printers = self.monitor.get_all_printers()
+        if idx >= len(printers):
+            await query.answer("Принтер не знайдено", show_alert=True)
+            return
+        p = printers[idx]
+        verb = {'pause': 'призупинити', 'resume': 'відновити', 'stop': 'ЗУПИНИТИ'}.get(action, action)
+        await query.answer()
+        kb = [[
+            InlineKeyboardButton("✅ Так", callback_data=f"ctlyes_{action}_{idx}"),
+            InlineKeyboardButton("❌ Ні", callback_data=f"printer_{idx}"),
+        ]]
+        await query.edit_message_text(
+            f"❓ Точно {verb} друк на «{p.name}»?",
+            reply_markup=InlineKeyboardMarkup(kb))
+
+    async def _do_control(self, query, action: str, idx: int):
+        """Виконати керування: клік по кнопці клієнта через CDP (тільки адмін)."""
+        if not self.is_admin(query.from_user.id):
+            await query.answer("Лише адмін може керувати принтерами", show_alert=True)
+            return
+        if not self.monitor or not self.monitor.running:
+            await query.answer("Моніторинг не запущений", show_alert=True)
+            return
+        printers = self.monitor.get_all_printers()
+        if idx >= len(printers):
+            await query.answer("Принтер не знайдено", show_alert=True)
+            return
+        name = printers[idx].name
+        await query.answer("Виконую…")
+        await query.edit_message_text(f"⏳ {action} → «{name}»…")
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(None, lambda: self.monitor.control_printer(name, action))
+        back = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ До принтера", callback_data=f"printer_{idx}")]])
+        if res.get('ok'):
+            note = "" if res.get('confirmed') else "\n\n⚠️ Підтвердження клієнта не знайдено — перевір принтер вручну."
+            await query.edit_message_text(
+                f"✅ Команду «{action}» надіслано на «{name}».{note}", reply_markup=back)
+        else:
+            hints = {
+                'no_button': 'принтер зараз не в стані для цієї дії',
+                'not_found': 'принтер не знайдено на сторінці клієнта',
+                'no_card': 'не вдалося знайти картку принтера',
+                'client_unreachable': 'клієнт недоступний на debug-порту',
+            }
+            err = res.get('error', 'невідома помилка')
+            await query.edit_message_text(
+                f"❌ Не вдалося: {hints.get(err, err)}", reply_markup=back)
     
     async def settings_users(self, query):
         """Налаштування користувачів та груп"""

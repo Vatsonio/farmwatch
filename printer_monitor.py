@@ -558,6 +558,107 @@ class BambuPrinterMonitor:
         }
         return out
 
+    # ========================= КЕРУВАННЯ (CDP click) =========================
+    def _control_find_js(self, name: str, titles: list) -> str:
+        """JS, що знаходить картку принтера за точним імʼям на #/printers і клікає
+        кнопку дії за title (Pause/Resume/Stop). Повертає {ok,msg,title}."""
+        return (
+            "(() => {"
+            "  const NAME=" + json.dumps(name) + ";"
+            "  const TITLES=" + json.dumps(titles) + ";"
+            "  const leaf=[...document.querySelectorAll('div,span,a,p')]"
+            "    .find(e=>e.children.length===0 && (e.textContent||'').trim()===NAME);"
+            "  if(!leaf) return {ok:false,msg:'not_found'};"
+            "  let card=leaf;"
+            "  for(let i=0;i<12 && card;i++){ if(card.querySelector('button[title]')) break; card=card.parentElement; }"
+            "  if(!card) return {ok:false,msg:'no_card'};"
+            "  let btn=null;"
+            "  for(const t of TITLES){ btn=card.querySelector('button[title=\"'+t+'\"]'); if(btn) break; }"
+            "  if(!btn) return {ok:false,msg:'no_button'};"
+            "  btn.click();"
+            "  return {ok:true,msg:'clicked',title:btn.getAttribute('title')};"
+            "})()"
+        )
+
+    @staticmethod
+    def _control_confirm_js() -> str:
+        """JS, що підтверджує модалку клієнта (Semi). Клікає позитивну кнопку,
+        НІКОЛИ не Cancel — тож хибне спрацювання просто лишає дію невиконаною (безпечно)."""
+        return (
+            "(() => {"
+            "  const modal=document.querySelector('.semi-modal-content,.semi-modal,[role=\"dialog\"]');"
+            "  if(!modal) return {confirmed:false,msg:'no_modal'};"
+            "  const bad=/cancel|скасув|відмін|取消|\\bno\\b/i;"
+            "  const good=/confirm|ok|yes|stop|pause|resume|continue|підтверд|так|продовж|зупин|віднов|哎|确定|确认/i;"
+            "  const btns=[...modal.querySelectorAll('button')];"
+            "  let btn=btns.find(b=>good.test((b.innerText||'')) && !bad.test((b.innerText||'')));"
+            "  if(!btn) btn=modal.querySelector('button.semi-button-danger:not([disabled]),button.semi-button-primary:not([disabled])');"
+            "  if(!btn || bad.test((btn.innerText||''))) return {confirmed:false,msg:'no_confirm_btn'};"
+            "  btn.click();"
+            "  return {confirmed:true,label:(btn.innerText||'').trim()};"
+            "})()"
+        )
+
+    def control_printer(self, name: str, action: str, timeout: float = 12.0) -> dict:
+        """Керування принтером кліком по власних кнопках клієнта через CDP.
+
+        action: 'pause' | 'resume' | 'stop'. Відкриває ОКРЕМЕ CDP-зʼєднання (не
+        чіпає ws монітора), переходить на #/printers, знаходить картку за точним
+        імʼям, клікає кнопку дії і підтверджує модалку клієнта, потім повертає
+        клієнт на #/monitor. Безпечно: якщо принтер не в потрібному стані —
+        повертає no_button, нічого не натиснувши деструктивного.
+        """
+        action = (action or "").lower()
+        title_map = {
+            "pause": ["Pause"],
+            "resume": ["Resume", "Continue", "Play", "Start"],
+            "stop": ["Stop"],
+        }
+        if action not in title_map:
+            return {"ok": False, "error": "unknown_action"}
+
+        page = self.get_dashboard_page()
+        if not page or "webSocketDebuggerUrl" not in page:
+            return {"ok": False, "error": "client_unreachable"}
+
+        ws = None
+        cid = [9000]
+
+        def ev(expr):
+            cid[0] += 1
+            ws.send(json.dumps({"id": cid[0], "method": "Runtime.evaluate",
+                                "params": {"expression": expr, "returnByValue": True}}))
+            while True:
+                m = json.loads(ws.recv())
+                if m.get("id") == cid[0]:
+                    return m.get("result", {}).get("result", {}).get("value")
+
+        try:
+            ws = websocket.create_connection(page["webSocketDebuggerUrl"], timeout=timeout)
+            ev("location.hash='#/printers'")
+            time.sleep(3.0)
+            res = ev(self._control_find_js(name, title_map[action]))
+            if not res or not res.get("ok"):
+                ev("location.hash='#/monitor'")
+                return {"ok": False, "error": (res or {}).get("msg", "eval_failed")}
+            time.sleep(0.8)
+            conf = ev(self._control_confirm_js())
+            time.sleep(0.4)
+            ev("location.hash='#/monitor'")
+            logger.info("🎛️ керування %s -> %s (clicked=%s, confirmed=%s)",
+                        action, name, res.get("title"), bool(conf and conf.get("confirmed")))
+            return {"ok": True, "action": action, "clicked": res.get("title"),
+                    "confirmed": bool(conf and conf.get("confirmed"))}
+        except Exception as e:
+            logger.error("❌ control_printer(%s, %s): %s", name, action, e)
+            return {"ok": False, "error": str(e)}
+        finally:
+            try:
+                if ws:
+                    ws.close()
+            except Exception:
+                pass
+
     def parse_printers_from_html(self, html: str) -> List[PrinterStatus]:
         """Парсинг принтерів з HTML"""
         soup = BeautifulSoup(html, 'html.parser')
