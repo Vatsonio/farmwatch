@@ -62,8 +62,13 @@ monitor.on_update_complete = _chained
 Конфіг, нова секція у `DEFAULT_CONFIG` (appconfig.py) і `config.example.json`:
 
 ```json
-"serial": { "enabled": false, "port": "COM3", "baud": 115200 }
+"serial": { "enabled": false, "port": "auto", "baud": 115200 }
 ```
+
+`port: "auto"` (дефолт): плата шукається сама по USB VID (`autodetect_port()`):
+спершу Espressif `0x303A` (native USB C3), далі мости CP210x/CH340/FTDI. Порт
+перерішується на кожне відкриття, тож перепідключення чи зміна COM переживається.
+Можна вписати конкретний `COM4`, тоді автопошук не задіюється.
 
 ### Протокол serial (текст, по рядку)
 

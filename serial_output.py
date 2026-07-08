@@ -29,6 +29,28 @@ _STATUS_LETTER = {
 _DEFAULT_LETTER = "i"
 _MAX_PRINTERS = 8
 
+# USB VID для автопошуку плати: спершу Espressif (native USB), далі мости USB-UART
+_ESPRESSIF_VIDS = (0x303A,)
+_BRIDGE_VIDS = (0x10C4, 0x1A86, 0x0403)  # CP210x, CH340, FTDI
+
+
+def autodetect_port(ports=None):
+    """Знайти COM порт ESP по USB VID. Повертає назву порту або None.
+
+    ports можна передати для тесту; інакше береться serial.tools.list_ports.
+    """
+    if ports is None:
+        try:
+            from serial.tools import list_ports
+            ports = list(list_ports.comports())
+        except Exception:
+            return None
+    for vids in (_ESPRESSIF_VIDS, _BRIDGE_VIDS):
+        for p in ports:
+            if getattr(p, "vid", None) in vids:
+                return p.device
+    return None
+
 
 def _entry(printer):
     """Один принтер у вигляді <letter><progress>. Duck typing по PrinterStatus."""
@@ -101,16 +123,26 @@ class SerialDisplay:
         import serial  # ленивий імпорт: farmwatch не залежить від pyserial жорстко
         return serial.Serial(port, baud, timeout=1)
 
+    def _resolve_port(self):
+        """Порт з конфігу, або автопошук якщо він 'auto'/порожній. Перерішується щоразу."""
+        if self.port and str(self.port).lower() != "auto":
+            return self.port
+        return autodetect_port()
+
     def _open(self):
         if self._ser is not None:
             return True
+        port = self._resolve_port()
+        if not port:
+            logger.warning("📟 Дисплей: ESP не знайдено (автопошук)")
+            return False
         factory = self._serial_factory or self._pyserial_factory
         try:
-            self._ser = factory(self.port, self.baud)
-            logger.info("📟 Дисплей: порт %s відкрито", self.port)
+            self._ser = factory(port, self.baud)
+            logger.info("📟 Дисплей: порт %s відкрито", port)
             return True
         except Exception as e:
-            logger.warning("📟 Дисплей: не відкрити порт %s: %s", self.port, e)
+            logger.warning("📟 Дисплей: не відкрити порт %s: %s", port, e)
             self._ser = None
             return False
 

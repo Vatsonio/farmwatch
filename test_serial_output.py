@@ -5,11 +5,15 @@ import unittest
 from types import SimpleNamespace
 
 import serial_output
-from serial_output import build_frame, SerialDisplay
+from serial_output import build_frame, SerialDisplay, autodetect_port
 
 
 def _p(status, progress, online=True):
     return SimpleNamespace(status=status, progress=progress, online=online)
+
+
+def _port(device, vid):
+    return SimpleNamespace(device=device, vid=vid)
 
 
 class FakeSerial:
@@ -61,6 +65,29 @@ class BuildFrameTests(unittest.TestCase):
         frame = build_frame(printers)
         self.assertTrue(frame.startswith("FW|8|"))
         self.assertEqual(frame.count(","), 7)
+
+
+class AutodetectTests(unittest.TestCase):
+    def test_prefers_espressif_vid(self):
+        ports = [_port("COM20", None), _port("COM4", 0x303A), _port("COM5", 0x1A86)]
+        self.assertEqual(autodetect_port(ports), "COM4")
+
+    def test_falls_back_to_bridge(self):
+        ports = [_port("COM20", None), _port("COM7", 0x10C4)]
+        self.assertEqual(autodetect_port(ports), "COM7")
+
+    def test_none_when_no_match(self):
+        ports = [_port("COM20", None), _port("COM21", 0x1234)]
+        self.assertIsNone(autodetect_port(ports))
+
+    def test_resolve_explicit_port_wins(self):
+        d = SerialDisplay("COM9")
+        self.assertEqual(d._resolve_port(), "COM9")
+
+    def test_resolve_auto_uses_autodetect(self):
+        d = SerialDisplay("auto")
+        # без заліза autodetect поверне None або якийсь порт; головне, що не 'auto'
+        self.assertNotEqual(d._resolve_port(), "auto")
 
 
 class SenderTests(unittest.TestCase):

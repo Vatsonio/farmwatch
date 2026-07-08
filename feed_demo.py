@@ -63,7 +63,8 @@ def advance(printers):
 
 def main():
     ap = argparse.ArgumentParser(description="Демо-подача кадрів у ESP матрицю")
-    ap.add_argument("port", help="COM порт (напр. COM3), або '-' для режиму без порту")
+    ap.add_argument("port", nargs="?", default="auto",
+                    help="COM порт (напр. COM4), 'auto' автопошук (дефолт), '-' без порту")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--printers", type=int, default=5)
     ap.add_argument("--interval", type=float, default=1.0, help="секунд між змінами стану")

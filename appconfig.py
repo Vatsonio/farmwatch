@@ -41,7 +41,7 @@ DEFAULT_CONFIG = {
     },
     "serial": {
         "enabled": False,
-        "port": "COM3",
+        "port": "auto",
         "baud": 115200,
     },
 }

@@ -102,14 +102,14 @@ pip install -r requirements.txt
 `GND→GND`, `DIN→GPIO4`, `CS→GPIO5`, `CLK→GPIO6`. Яскравість тримається низькою,
 бо 4 модулі живляться від USB.
 
-Увімкнення у `config.json`:
+Увімкнення у `config.json` (порт `auto` = сам знайде плату по USB, вручну COM не треба):
 
 ```json
-"serial": { "enabled": true, "port": "COM3", "baud": 115200 }
+"serial": { "enabled": true, "port": "auto", "baud": 115200 }
 ```
 
 Прошивка у `firmware/` (PlatformIO): `cd firmware && pio run -t upload`.
-Перевірити дисплей без farmwatch: `python feed_demo.py COM3`.
+Перевірити дисплей без farmwatch: `python feed_demo.py` (порт визначиться сам).
 
 ## Команди бота
 
