@@ -1,0 +1,144 @@
+"""Serial output модуль: віддає стан ферми у ESP32-C3 матрицю 8x8 по COM порту.
+
+farmwatch читає Bambu client через CDP (єдиний процес), а цей модуль лише
+бере вже готовий список PrinterStatus і шле компактний текстовий кадр у ESP.
+Так дисплей не конфліктує з рештою farmwatch.
+
+Протокол (текст, по рядку):
+    FW|<count>|<entry>,<entry>,...\\n
+    entry = <letter><progress>,  progress = 0..100
+
+Мапа станів -> літера: printing=p, idle=i, finished=d, stopped=e, paused=a, offline=o.
+"""
+
+import logging
+import threading
+import time
+
+logger = logging.getLogger(__name__)
+
+# PrinterStatus.status -> літера протоколу
+_STATUS_LETTER = {
+    "printing": "p",
+    "idle": "i",
+    "finished": "d",
+    "stopped": "e",
+    "paused": "a",
+    "offline": "o",
+}
+_DEFAULT_LETTER = "i"
+_MAX_PRINTERS = 8
+
+
+def _entry(printer):
+    """Один принтер у вигляді <letter><progress>. Duck typing по PrinterStatus."""
+    status = getattr(printer, "status", None) or "idle"
+    if not getattr(printer, "online", True):
+        status = "offline"
+    letter = _STATUS_LETTER.get(status, _DEFAULT_LETTER)
+    try:
+        prog = int(getattr(printer, "progress", 0) or 0)
+    except (TypeError, ValueError):
+        prog = 0
+    prog = max(0, min(100, prog))
+    return f"{letter}{prog}"
+
+
+def build_frame(printers):
+    """Будує кадр FW|<count>|<entry>,... Обрізає до 8 принтерів (стільки колонок на 8x8)."""
+    printers = list(printers or [])
+    shown = printers[:_MAX_PRINTERS]
+    if len(printers) > _MAX_PRINTERS:
+        logger.warning("📟 Дисплей: %d принтерів, показуємо перші %d", len(printers), _MAX_PRINTERS)
+    entries = ",".join(_entry(p) for p in shown)
+    return f"FW|{len(shown)}|{entries}\n"
+
+
+class SerialDisplay:
+    """Тримає останній кадр і раз на `heartbeat` секунд шле його у COM порт.
+
+    Відправка окремим потоком, незалежно від повільного циклу монітора (10..60 с):
+    ESP отримує стабільний heartbeat і завжди свіжий стан. Порт відкривається
+    ліниво з backoff, помилки не валять farmwatch.
+    """
+
+    def __init__(self, port, baud=115200, heartbeat=2.0, serial_factory=None):
+        self.port = port
+        self.baud = baud
+        self.heartbeat = heartbeat
+        self._serial_factory = serial_factory  # інʼєкція для тестів; інакше pyserial
+        self._ser = None
+        self._last_frame = "FW|0|\n"
+        self._lock = threading.Lock()
+        self._thread = None
+        self._running = False
+
+    def push(self, printers):
+        """Оновити останній відомий кадр. Викликається з колбека монітора, не блокує."""
+        frame = build_frame(printers)
+        with self._lock:
+            self._last_frame = frame
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, name="SerialDisplay", daemon=True)
+        self._thread.start()
+        logger.info("📟 Дисплей: старт, порт %s @ %d", self.port, self.baud)
+
+    def stop(self):
+        self._running = False
+        t = self._thread
+        if t:
+            t.join(timeout=self.heartbeat + 1)
+        self._close()
+        logger.info("📟 Дисплей: стоп")
+
+    # --- внутрішнє ---
+
+    def _pyserial_factory(self, port, baud):
+        import serial  # ленивий імпорт: farmwatch не залежить від pyserial жорстко
+        return serial.Serial(port, baud, timeout=1)
+
+    def _open(self):
+        if self._ser is not None:
+            return True
+        factory = self._serial_factory or self._pyserial_factory
+        try:
+            self._ser = factory(self.port, self.baud)
+            logger.info("📟 Дисплей: порт %s відкрито", self.port)
+            return True
+        except Exception as e:
+            logger.warning("📟 Дисплей: не відкрити порт %s: %s", self.port, e)
+            self._ser = None
+            return False
+
+    def _close(self):
+        if self._ser is not None:
+            try:
+                self._ser.close()
+            except Exception:
+                pass
+            self._ser = None
+
+    def _loop(self):
+        backoff = 1.0
+        while self._running:
+            if not self._open():
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+                continue
+            backoff = 1.0
+            with self._lock:
+                frame = self._last_frame
+            try:
+                self._ser.write(frame.encode("ascii", "ignore"))
+                flush = getattr(self._ser, "flush", None)
+                if callable(flush):
+                    flush()
+            except Exception as e:
+                logger.warning("📟 Дисплей: помилка запису: %s", e)
+                self._close()
+                continue
+            time.sleep(self.heartbeat)
