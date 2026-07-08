@@ -116,6 +116,14 @@
         bp.dataset.running = s.bot_running ? "1" : "0";
         bp.textContent = s.bot_running ? "Stop bot" : "Start bot";
       }
+      // ESP display pill: shown only when enabled; green when the board is connected,
+      // amber when enabled but no board is talking.
+      const espPill = $("#esp-pill");
+      if (espPill) {
+        espPill.style.display = s.serial_enabled ? "" : "none";
+        $("#esp-led").className = "led " + (s.esp_connected ? "on" : "warn");
+        $("#esp-label").textContent = s.esp_connected ? "ESP LIVE" : "ESP …";
+      }
       setStat("s-token", s.token_set ? "set" : "missing", s.token_set ? "ok" : "bad");
       setStat("s-users", s.users);
       setStat("s-groups", s.groups);
@@ -419,6 +427,14 @@
     $("#log-refresh").onclick = () => loadLog(true);
     $("#log-name").onchange = () => loadLog(true);
     $("#diag-copy").onclick = () => copyBtn($("#diag-copy"), $("#diag-list").innerText);
+    $("#diag-clear").onclick = async () => {
+      const b = $("#diag-clear"), prev = b.textContent;
+      b.disabled = true;
+      try { await fetch("/api/diagnostics/clear", { method: "POST" }); b.textContent = "Cleared"; }
+      catch (e) { b.textContent = "Error"; }
+      loadDiagnostics();
+      setTimeout(() => { b.textContent = prev; b.disabled = false; }, 1200);
+    };
     $("#log-copy").onclick = () => copyBtn($("#log-copy"), $("#log-view").innerText);
     $("#mon-restart").onclick = async () => {
       const b = $("#mon-restart"), prev = b.textContent;

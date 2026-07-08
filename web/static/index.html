@@ -21,6 +21,7 @@
     <div class="command-bar__spacer"></div>
     <span class="ver-chip" id="ver">v0.0</span>
     <span class="status-pill"><span class="led off" id="bot-led"></span><span class="t-label" id="bot-label">BOT</span></span>
+    <span class="status-pill" id="esp-pill" style="display:none"><span class="led off" id="esp-led"></span><span class="t-label" id="esp-label">ESP</span></span>
     <button class="icon-btn" id="settings-toggle" type="button" title="Settings" aria-label="Open settings">⚙</button>
     <button class="icon-btn" id="theme-toggle" type="button" title="Light / dark theme" aria-label="Toggle theme">◐</button>
     <button class="icon-btn" id="fs-toggle" type="button" title="Fullscreen" aria-label="Toggle fullscreen">⛶</button>
@@ -192,6 +193,7 @@
     <section class="panel panel--wide" id="diag-panel">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Diagnostics</span>
         <span class="panel__hint" style="margin-left:auto">disappearance signals from the monitor log</span>
+        <button class="btn-mini" id="diag-clear" type="button" style="margin-left:8px">Clear</button>
         <button class="btn-mini" id="diag-copy" type="button" style="margin-left:8px">Copy</button></div>
       <div class="diag-list" id="diag-list"><div class="diag-empty">Loading...</div></div>
 

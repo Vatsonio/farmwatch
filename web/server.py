@@ -52,6 +52,7 @@ app.state.bot_task = None    # the running bot.start() task (cancel to restart i
 app.state.bot_restart = False
 app.state.bot_enabled = True  # user toggle: when False the supervisor keeps the bot off
 app.state.app_runner = None  # web.gui._run_app, to relaunch the bot supervisor
+app.state.diag_cleared = set()  # diagnostics lines the user acknowledged via Clear
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
@@ -137,6 +138,41 @@ def bot_running() -> bool:
         s.close()
 
 
+def bot_is_running() -> bool:
+    """Truthful bot state. In the tray GUI the bot runs in this process, so its task
+    is authoritative; the lock-port heuristic can false-positive (held during startup
+    or a lingering lock). Without a task, no token means the bot cannot run at all."""
+    task = getattr(app.state, "bot_task", None)
+    if task is not None:
+        return not task.done()
+    if not getattr(app.state, "bot_enabled", True):
+        return False
+    if not appconfig.token_is_set(load_config()):
+        return False
+    return bot_running()  # a separate console bot may hold the lock
+
+
+def esp_connected() -> bool:
+    """True when the attached display actually has its serial port open."""
+    mon = getattr(app.state, "monitor", None)
+    disp = getattr(mon, "_serial_display", None) if mon else None
+    return bool(disp is not None and getattr(disp, "_ser", None) is not None)
+
+
+def diag_hits() -> list:
+    """Printer disappearance signals from the monitor log."""
+    hits = []
+    mon_log = LOG_FILES["monitor"]
+    if mon_log.exists():
+        try:
+            for ln in mon_log.read_text(encoding="utf-8", errors="replace").splitlines():
+                if ("ЗНИКЛИ" in ln) or ("0 карток" in ln) or ("впала" in ln):
+                    hits.append(ln)
+        except Exception as e:
+            hits.append(f"(could not read monitor log: {e})")
+    return hits
+
+
 def read_version() -> str:
     try:
         import importlib
@@ -209,9 +245,10 @@ async def api_status():
     mon = cfg.get("monitor", {})
     dumps_dir = ROOT / "debug_dumps"
     dumps = sorted([p.name for p in dumps_dir.glob("*.html")]) if dumps_dir.exists() else []
+    sr = cfg.get("serial", {})
     return {
         "version": read_version(),
-        "bot_running": bot_running(),
+        "bot_running": bot_is_running(),
         "bot_enabled": bool(getattr(app.state, "bot_enabled", True)),
         "token_set": bool(tg.get("bot_token") and "PUT-YOUR" not in str(tg.get("bot_token"))),
         "users": len(tg.get("allowed_users", [])),
@@ -220,6 +257,8 @@ async def api_status():
         "update_interval": mon.get("update_interval"),
         "auto_launch": bool(mon.get("auto_launch", True)),
         "proxy_enabled": bool(tg.get("proxy", {}).get("enabled", False)),
+        "serial_enabled": bool(sr.get("enabled", False)),
+        "esp_connected": esp_connected(),
         "dumps": len(dumps),
         "config_exists": CONFIG.exists(),
     }
@@ -247,18 +286,18 @@ async def api_logs(name: str = "monitor", tail: int = 200):
 @app.get("/api/diagnostics")
 async def api_diagnostics(tail: int = 60):
     """Recent printer disappearance signals from the monitor log + dump list."""
-    mon_log = LOG_FILES["monitor"]
-    hits = []
-    if mon_log.exists():
-        try:
-            for ln in mon_log.read_text(encoding="utf-8", errors="replace").splitlines():
-                if ("ЗНИКЛИ" in ln) or ("0 карток" in ln) or ("впала" in ln):
-                    hits.append(ln)
-        except Exception as e:
-            hits.append(f"(could not read monitor log: {e})")
+    cleared = getattr(app.state, "diag_cleared", set())
+    hits = [h for h in diag_hits() if h not in cleared]
     dumps_dir = ROOT / "debug_dumps"
     dumps = sorted([p.name for p in dumps_dir.glob("*.html")], reverse=True) if dumps_dir.exists() else []
     return {"disappearances": hits[-tail:], "dump_count": len(dumps), "dumps": dumps[:40]}
+
+
+@app.post("/api/diagnostics/clear")
+async def api_diagnostics_clear():
+    """Acknowledge (hide) the current disappearance signals. New ones still show."""
+    app.state.diag_cleared = set(diag_hits())
+    return {"ok": True, "cleared": len(app.state.diag_cleared)}
 
 
 @app.get("/api/metrics")
