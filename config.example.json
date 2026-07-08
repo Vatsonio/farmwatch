@@ -25,5 +25,10 @@
     "printer_online": false,
     "periodic_updates": false,
     "periodic_interval": 3600
+  },
+  "serial": {
+    "enabled": false,
+    "port": "COM3",
+    "baud": 115200
   }
 }

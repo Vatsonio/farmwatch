@@ -39,6 +39,11 @@ DEFAULT_CONFIG = {
         "periodic_updates": False,
         "periodic_interval": 3600,
     },
+    "serial": {
+        "enabled": False,
+        "port": "COM3",
+        "baud": 115200,
+    },
 }
 
 

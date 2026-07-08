@@ -1350,6 +1350,13 @@ class BambuTelegramBot:
         monitor.on_printer_offline = lambda n, p: self._schedule_callback(self.on_printer_offline(n, p))
         monitor.on_update_complete = lambda: self._schedule_callback(self.update_status_messages())
 
+        # Апаратний дисплей (ESP32 матриця 8x8), якщо увімкнено в конфізі
+        try:
+            import serial_output
+            serial_output.attach(monitor, self.config)
+        except Exception as e:
+            logger.warning(f"📟 Дисплей: не приєднано: {e}")
+
     def _detach_monitor_callbacks(self, monitor):
         """Зняти callback'и, щоб монітор більше не кликав у (можливо мертвий) loop бота."""
         monitor.on_printer_status_change = None

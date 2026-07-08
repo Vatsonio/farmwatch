@@ -222,6 +222,12 @@ def _run_app():
     if app.state.monitor is None:
         mon = _build_app_monitor()
         app.state.monitor = mon
+        # Апаратний дисплей (ESP32), щоб він працював і в режимі метрик без бота
+        try:
+            import serial_output
+            serial_output.attach(mon, appconfig.load_config())
+        except Exception as e:
+            log.warning("📟 Дисплей: не приєднано: %s", e)
         threading.Thread(target=lambda: _safe_start(mon), daemon=True).start()
     shared = app.state.monitor
 

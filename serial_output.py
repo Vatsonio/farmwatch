@@ -142,3 +142,62 @@ class SerialDisplay:
                 self._close()
                 continue
             time.sleep(self.heartbeat)
+
+
+def create_from_config(config):
+    """Створити і запустити SerialDisplay якщо config['serial']['enabled']. Інакше None.
+
+    Ніколи не кидає: помилка тут не має валити farmwatch.
+    """
+    try:
+        cfg = (config or {}).get("serial", {}) if hasattr(config, "get") else {}
+        if not cfg.get("enabled"):
+            return None
+        disp = SerialDisplay(cfg.get("port", "COM3"), int(cfg.get("baud", 115200)))
+        disp.start()
+        return disp
+    except Exception as e:
+        logger.warning("📟 Дисплей: не створити: %s", e)
+        return None
+
+
+def chain_push(monitor, display):
+    """Дочепити display.push(printers) до наявного monitor.on_update_complete.
+
+    Зберігає попередній колбек (бот/веб) і кличе обидва. No-op якщо display None.
+    """
+    if display is None:
+        return
+    prev = getattr(monitor, "on_update_complete", None)
+
+    def _chained():
+        if prev:
+            prev()
+        try:
+            display.push(monitor.get_all_printers())
+        except Exception as e:
+            logger.warning("📟 Дисплей: push помилка: %s", e)
+
+    monitor.on_update_complete = _chained
+
+
+def attach(monitor, config):
+    """Єдина точка вбудовування дисплея. Ідемпотентно: один SerialDisplay на монітор.
+
+    Інстанс зберігається на monitor._serial_display, тож бот і GUI не створять
+    двох копій на один COM порт. Кличеться щоразу коли перевстановлюють
+    on_update_complete (бот при кожному attach), щоб знову дочепити push.
+    Ніколи не кидає. No-op якщо serial.enabled=false.
+    """
+    try:
+        disp = getattr(monitor, "_serial_display", None)
+        if disp is None:
+            disp = create_from_config(config)
+            if disp is None:
+                return None
+            monitor._serial_display = disp
+        chain_push(monitor, disp)
+        return disp
+    except Exception as e:
+        logger.warning("📟 Дисплей: не приєднано: %s", e)
+        return None
