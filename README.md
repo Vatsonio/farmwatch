@@ -86,6 +86,28 @@ pip install -r requirements.txt
 `fastapi`, `uvicorn`, `pywebview` (вже у `requirements.txt`; на Windows вікно
 малюється через вбудований Edge WebView2).
 
+## Апаратний дисплей (ESP32-C3 + матриця 8x8)
+
+Фізичний індикатор статусу ферми на матриці 8x8 (MAX7219), яким керує сам
+farmwatch по USB serial. Дисплей не читає Bambu client напряму: дані бере
+монітор farmwatch, тож конфлікту нема.
+
+На матриці стовпчикова діаграма: колонка = принтер, висота = прогрес друку.
+Стан кодується анімацією (друк, простій, готово, стоп, пауза, offline), а на
+подію (друк завершено або помилка) грає яскравий оверлей. Схема, протокол і
+деталі: [`docs/esp_display_design.md`](docs/esp_display_design.md).
+
+Розводка: MAX7219 `VCC→5V`, `GND→GND`, `DIN→GPIO4`, `CS→GPIO5`, `CLK→GPIO6`.
+
+Увімкнення у `config.json`:
+
+```json
+"serial": { "enabled": true, "port": "COM3", "baud": 115200 }
+```
+
+Прошивка у `firmware/` (PlatformIO): `cd firmware && pio run -t upload`.
+Перевірити дисплей без farmwatch: `python feed_demo.py COM3`.
+
 ## Команди бота
 
 | Команда     | Опис                                                |
@@ -109,6 +131,9 @@ pip install -r requirements.txt
 | `config.example.json`| Шаблон конфігурації                                                   |
 | `version.py`         | Версія проєкту (`__version__`) — оновлюйте перед тегом `vX.Y.Z` (CI звіряє) |
 | `web/`               | Панель налаштувань v2 (FastAPI + статичний фронтенд): config.json, статус, логи, діагностика |
+| `serial_output.py`   | Віддача статусу ферми у ESP матрицю 8x8 по COM порту                  |
+| `feed_demo.py`       | Демо-подача кадрів у дисплей для тесту без farmwatch                  |
+| `firmware/`          | Прошивка ESP32-C3 (PlatformIO) для матриці 8x8 на MAX7219            |
 
 ## Примітки
 
