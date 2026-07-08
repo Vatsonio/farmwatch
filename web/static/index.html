@@ -21,6 +21,7 @@
     <div class="command-bar__spacer"></div>
     <span class="ver-chip" id="ver">v0.0</span>
     <span class="status-pill"><span class="led off" id="bot-led"></span><span class="t-label" id="bot-label">BOT</span></span>
+    <button class="icon-btn" id="settings-toggle" type="button" title="Settings" aria-label="Open settings">⚙</button>
     <button class="icon-btn" id="theme-toggle" type="button" title="Light / dark theme" aria-label="Toggle theme">◐</button>
     <button class="icon-btn" id="fs-toggle" type="button" title="Fullscreen" aria-label="Toggle fullscreen">⛶</button>
     <span class="clock" id="clock">00:00:00</span>
@@ -200,6 +201,16 @@
     </section>
 
   </main>
+
+  <div class="drawer-scrim" id="settings-scrim"></div>
+  <aside class="drawer" id="settings-drawer" aria-hidden="true" aria-label="Settings">
+    <div class="drawer__head">
+      <span class="panel__mark"></span>
+      <span class="drawer__title">Settings</span>
+      <button class="icon-btn" id="settings-close" type="button" style="margin-left:auto" aria-label="Close settings">✕</button>
+    </div>
+    <div class="drawer__body" id="settings-body"><!-- settings panels moved here by app.js --></div>
+  </aside>
 
   <div class="saved-flash" id="flash">Saved</div>
   <div class="savebar" id="savebar">

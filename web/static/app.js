@@ -454,6 +454,25 @@
       h.onclick = () => h.parentElement.classList.toggle("is-collapsed");
     });
 
+    // settings drawer: move every config panel into a right-side drawer opened from the gear
+    const drawer = $("#settings-drawer");
+    const scrim = $("#settings-scrim");
+    const gear = $("#settings-toggle");
+    const sbody = $("#settings-body");
+    if (sbody) $$(".panel--collapsible").forEach((p) => sbody.appendChild(p));
+    const openSettings = () => {
+      drawer.classList.add("open"); scrim.classList.add("open");
+      gear.classList.add("is-active"); drawer.setAttribute("aria-hidden", "false");
+    };
+    const closeSettings = () => {
+      drawer.classList.remove("open"); scrim.classList.remove("open");
+      gear.classList.remove("is-active"); drawer.setAttribute("aria-hidden", "true");
+    };
+    if (gear) gear.onclick = () => (drawer.classList.contains("open") ? closeSettings() : openSettings());
+    $("#settings-close").onclick = closeSettings;
+    scrim.onclick = closeSettings;
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSettings(); });
+
     // tools
     const toolRun = async (btn, url, okText) => {
       const prev = btn.textContent;
