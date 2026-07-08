@@ -112,6 +112,15 @@ def coerce_config(data: dict) -> dict:
         nf["periodic_interval"] = 3600
     cfg["notifications"] = nf
 
+    sr = dict(cfg.get("serial", {}))
+    sr["enabled"] = bool(sr.get("enabled", False))
+    sr["port"] = str(sr.get("port", "auto") or "auto")
+    try:
+        sr["baud"] = int(sr.get("baud", 115200))
+    except (TypeError, ValueError):
+        sr["baud"] = 115200
+    cfg["serial"] = sr
+
     return cfg
 
 
@@ -169,6 +178,27 @@ async def api_save_config(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     log.info("config.json saved via settings GUI")
     return {"ok": True, "saved_at": datetime.now().isoformat(), "config": cfg}
+
+
+@app.get("/api/serial-ports")
+async def api_serial_ports():
+    """Список COM портів для вибору ESP у налаштуваннях (з позначкою якого порту ESP)."""
+    ports = []
+    detected = None
+    try:
+        import serial_output
+        from serial.tools import list_ports
+
+        detected = serial_output.autodetect_port()
+        for p in list_ports.comports():
+            ports.append({
+                "device": p.device,
+                "description": (p.description or "").strip(),
+                "is_esp": getattr(p, "vid", None) in serial_output._ESPRESSIF_VIDS,
+            })
+    except Exception as e:
+        return JSONResponse({"ports": [], "detected": None, "error": str(e)})
+    return JSONResponse({"ports": ports, "detected": detected})
 
 
 @app.get("/api/status")

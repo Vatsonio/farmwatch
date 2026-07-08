@@ -327,6 +327,29 @@
     setTimeout(() => { btn.textContent = old; btn.classList.remove("copied"); }, 1200);
   }
 
+  /* ---- serial ports (Display panel) ---- */
+  async function loadSerialPorts() {
+    const sel = $("#serial-port");
+    if (!sel) return;
+    let data = { ports: [], detected: null };
+    try { data = await (await fetch("/api/serial-ports")).json(); } catch (e) {}
+    const cur = getPath(cfg, "serial.port") || "auto";
+    const devs = [];
+    const opts = ['<option value="auto">auto' + (data.detected ? " (" + _esc(data.detected) + ")" : "") + "</option>"];
+    (data.ports || []).forEach((p) => {
+      devs.push(p.device);
+      const tag = p.is_esp ? " [ESP]" : (p.description ? " — " + p.description : "");
+      opts.push('<option value="' + _esc(p.device) + '">' + _esc(p.device + tag) + "</option>");
+    });
+    if (cur !== "auto" && !devs.includes(cur)) {
+      opts.push('<option value="' + _esc(cur) + '">' + _esc(cur) + " (offline)</option>");
+    }
+    sel.innerHTML = opts.join("");
+    sel.value = cur;
+    const hint = $("#serial-hint");
+    if (hint) hint.textContent = data.detected ? ("ESP on " + data.detected) : "no ESP detected";
+  }
+
   /* ---- save / revert ---- */
   async function save() {
     const btn = $("#save");
@@ -391,6 +414,8 @@
     };
     $("#save").onclick = save;
     $("#revert").onclick = revert;
+    loadSerialPorts();
+    $("#serial-refresh").onclick = () => loadSerialPorts();
     $("#log-refresh").onclick = () => loadLog(true);
     $("#log-name").onchange = () => loadLog(true);
     $("#diag-copy").onclick = () => copyBtn($("#diag-copy"), $("#diag-list").innerText);

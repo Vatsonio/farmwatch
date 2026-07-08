@@ -130,6 +130,28 @@
         <button class="toggle" role="switch" data-path="monitor.debug_logging" aria-checked="false"></button></div></div>
     </section>
 
+    <!-- DISPLAY (ESP) -->
+    <section class="panel panel--collapsible is-collapsed">
+      <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Display (ESP)</span>
+        <span class="panel__hint" id="serial-hint" style="margin-left:auto"></span></div>
+
+      <div class="field toggle-row"><span class="field__label">Enabled <small>send farm status to the 8x8 matrix</small></span>
+        <div class="field__control" style="justify-content:flex-end">
+          <button class="toggle" role="switch" data-path="serial.enabled" aria-checked="false"></button></div></div>
+
+      <div class="field"><span class="field__label">COM port <small>auto finds the board</small></span>
+        <div class="field__control">
+          <select data-path="serial.port" id="serial-port"><option value="auto">auto (detect)</option></select>
+          <button class="btn-mini" id="serial-refresh" type="button" style="margin-left:8px">Refresh</button></div></div>
+
+      <div class="field"><span class="field__label">Baud</span><div class="field__control">
+        <select data-path="serial.baud" class="input-narrow">
+          <option value="115200">115200</option><option value="57600">57600</option>
+          <option value="250000">250000</option><option value="9600">9600</option></select></div></div>
+
+      <div class="field"><span class="panel__hint">Changes apply after restarting the app.</span></div>
+    </section>
+
     <!-- NOTIFICATIONS -->
     <section class="panel panel--collapsible is-collapsed">
       <div class="panel__head"><span class="panel__mark"></span><span class="panel__title">Notifications</span></div>
