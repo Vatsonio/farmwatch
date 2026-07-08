@@ -105,8 +105,10 @@ pip install -r requirements.txt
 Увімкнення у `config.json` (порт `auto` = сам знайде плату по USB, вручну COM не треба):
 
 ```json
-"serial": { "enabled": true, "port": "auto", "baud": 115200 }
+"serial": { "enabled": true, "port": "auto", "baud": 115200, "labels": "numbers" }
 ```
+
+`labels: "names"` показує у прокрутці назви принтерів замість номерів (налаштовується і в GUI, панель Display).
 
 Прошивка у `firmware/` (PlatformIO): `cd firmware && pio run -t upload`.
 Перевірити дисплей без farmwatch: `python feed_demo.py` (порт визначиться сам).

@@ -33,13 +33,14 @@ static const uint32_t LINK_TIMEOUT_MS = 6000;
 struct Printer { char st; uint8_t progress; };
 Printer cur[MAX_PRINTERS];
 char prevSt[MAX_PRINTERS];
+char pname[MAX_PRINTERS][17];   // назва принтера (порожньо = показувати номер)
 uint8_t printerCount = 0;
 bool haveFirst = false;
 uint32_t lastFrameMs = 0;
 
 // --- екрани і події ---
 uint8_t screen = 0;                 // 0 = зведення, 1 = деталі
-char curText[256];                  // MD_Parola тримає вказівник, тож буфер статичний
+char curText[384];                  // MD_Parola тримає вказівник, тож буфер статичний
 char evtText[24];
 bool evtActive = false;
 
@@ -69,12 +70,21 @@ void applyFrame() {
   p = bar + 1;
 
   Printer parsed[MAX_PRINTERS];
+  char pn[MAX_PRINTERS][17];
   int n = 0;
   while (*p && n < count) {
     char letter = *p++;
     int prog = atoi(p);
     if (prog < 0) prog = 0;
     if (prog > 100) prog = 100;
+    while (*p >= '0' && *p <= '9') p++;   // пропустити цифри прогресу
+    pn[n][0] = '\0';
+    if (*p == 0x1f) {                     // опційна назва принтера
+      p++;
+      int k = 0;
+      while (*p && *p != ',' && k < 16) pn[n][k++] = *p++;
+      pn[n][k] = '\0';
+    }
     parsed[n].st = letter;
     parsed[n].progress = (uint8_t)prog;
     n++;
@@ -97,6 +107,8 @@ void applyFrame() {
   for (int i = 0; i < n; i++) {
     cur[i] = parsed[i];
     prevSt[i] = parsed[i].st;
+    strncpy(pname[i], pn[i], sizeof(pname[i]));
+    pname[i][sizeof(pname[i]) - 1] = '\0';
   }
   haveFirst = true;
   lastFrameMs = millis();
@@ -156,7 +168,8 @@ void buildDetail() {
   for (int i = 0; i < printerCount; i++) {
     char v[8];
     stateWord(cur[i].st, cur[i].progress, v);
-    w += sprintf(w, "%d %s   ", i + 1, v);
+    if (pname[i][0]) w += sprintf(w, "%s %s   ", pname[i], v);  // назва якщо є
+    else w += sprintf(w, "%d %s   ", i + 1, v);                 // інакше номер
   }
 }
 
@@ -192,7 +205,7 @@ void setup() {
   P.setInvert(false);
   P.displayClear();
 
-  for (int i = 0; i < MAX_PRINTERS; i++) { prevSt[i] = 0; cur[i].st = 'i'; cur[i].progress = 0; }
+  for (int i = 0; i < MAX_PRINTERS; i++) { prevSt[i] = 0; cur[i].st = 'i'; cur[i].progress = 0; pname[i][0] = '\0'; }
   lastFrameMs = millis() - LINK_TIMEOUT_MS;  // старт у стані "нема звʼязку"
 
   loadScreen();  // почне з NO LINK, поки нема даних

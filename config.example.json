@@ -29,6 +29,7 @@
   "serial": {
     "enabled": false,
     "port": "auto",
-    "baud": 115200
+    "baud": 115200,
+    "labels": "numbers"
   }
 }

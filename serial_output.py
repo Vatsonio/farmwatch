@@ -12,6 +12,7 @@ farmwatch читає Bambu client через CDP (єдиний процес), а
 """
 
 import logging
+import re
 import threading
 import time
 
@@ -28,6 +29,17 @@ _STATUS_LETTER = {
 }
 _DEFAULT_LETTER = "i"
 _MAX_PRINTERS = 8
+_NAME_SEP = "\x1f"          # роздільник значення/назви всередині запису
+_NAME_MAXLEN = 16
+_NON_ASCII = re.compile(r"[^\x20-\x7e]")  # усе поза друкованим ASCII (шрифт матриці лише латиниця)
+
+
+def _ascii_name(s):
+    """Назва принтера у безпечний для матриці ASCII рядок (без роздільників)."""
+    s = _NON_ASCII.sub("", str(s or ""))
+    s = s.replace(",", " ")           # кома розділяє записи
+    s = " ".join(s.split())           # стиснути пробіли
+    return s[:_NAME_MAXLEN].strip()
 
 # USB VID для автопошуку плати: спершу Espressif (native USB), далі мости USB-UART
 _ESPRESSIF_VIDS = (0x303A,)
@@ -52,8 +64,8 @@ def autodetect_port(ports=None):
     return None
 
 
-def _entry(printer):
-    """Один принтер у вигляді <letter><progress>. Duck typing по PrinterStatus."""
+def _entry(printer, use_names=False):
+    """Один принтер: <letter><progress>, за потреби + \\x1f<name>. Duck typing по PrinterStatus."""
     status = getattr(printer, "status", None) or "idle"
     if not getattr(printer, "online", True):
         status = "offline"
@@ -63,16 +75,24 @@ def _entry(printer):
     except (TypeError, ValueError):
         prog = 0
     prog = max(0, min(100, prog))
-    return f"{letter}{prog}"
+    entry = f"{letter}{prog}"
+    if use_names:
+        name = _ascii_name(getattr(printer, "name", ""))
+        if name:
+            entry += _NAME_SEP + name
+    return entry
 
 
-def build_frame(printers):
-    """Будує кадр FW|<count>|<entry>,... Обрізає до 8 принтерів (стільки колонок на 8x8)."""
+def build_frame(printers, use_names=False):
+    """Будує кадр FW|<count>|<entry>,... Обрізає до 8 принтерів (стільки влазить на дисплей).
+
+    use_names=True додає назву принтера в кожен запис (для показу назв замість номерів).
+    """
     printers = list(printers or [])
     shown = printers[:_MAX_PRINTERS]
     if len(printers) > _MAX_PRINTERS:
         logger.warning("📟 Дисплей: %d принтерів, показуємо перші %d", len(printers), _MAX_PRINTERS)
-    entries = ",".join(_entry(p) for p in shown)
+    entries = ",".join(_entry(p, use_names) for p in shown)
     return f"FW|{len(shown)}|{entries}\n"
 
 
@@ -84,10 +104,11 @@ class SerialDisplay:
     ліниво з backoff, помилки не валять farmwatch.
     """
 
-    def __init__(self, port, baud=115200, heartbeat=2.0, serial_factory=None):
+    def __init__(self, port, baud=115200, heartbeat=2.0, use_names=False, serial_factory=None):
         self.port = port
         self.baud = baud
         self.heartbeat = heartbeat
+        self.use_names = use_names
         self._serial_factory = serial_factory  # інʼєкція для тестів; інакше pyserial
         self._ser = None
         self._last_frame = "FW|0|\n"
@@ -97,7 +118,7 @@ class SerialDisplay:
 
     def push(self, printers):
         """Оновити останній відомий кадр. Викликається з колбека монітора, не блокує."""
-        frame = build_frame(printers)
+        frame = build_frame(printers, self.use_names)
         with self._lock:
             self._last_frame = frame
 
@@ -185,7 +206,8 @@ def create_from_config(config):
         cfg = (config or {}).get("serial", {}) if hasattr(config, "get") else {}
         if not cfg.get("enabled"):
             return None
-        disp = SerialDisplay(cfg.get("port", "COM3"), int(cfg.get("baud", 115200)))
+        use_names = str(cfg.get("labels", "numbers")).lower() == "names"
+        disp = SerialDisplay(cfg.get("port", "auto"), int(cfg.get("baud", 115200)), use_names=use_names)
         disp.start()
         return disp
     except Exception as e:

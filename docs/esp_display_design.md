@@ -62,8 +62,11 @@ monitor.on_update_complete = _chained
 Конфіг, нова секція у `DEFAULT_CONFIG` (appconfig.py) і `config.example.json`:
 
 ```json
-"serial": { "enabled": false, "port": "auto", "baud": 115200 }
+"serial": { "enabled": false, "port": "auto", "baud": 115200, "labels": "numbers" }
 ```
+
+`labels`: `"numbers"` (дефолт) показує номер принтера у прокрутці деталей,
+`"names"` показує назву принтера (ПК додає її у кадр).
 
 `port: "auto"` (дефолт): плата шукається сама по USB VID (`autodetect_port()`):
 спершу Espressif `0x303A` (native USB C3), далі мости CP210x/CH340/FTDI. Порт
@@ -74,8 +77,13 @@ monitor.on_update_complete = _chained
 
 ```
 FW|<count>|<entry>,<entry>,...\n
-entry = <letter><progress>      progress = 0..100
+entry = <letter><progress>[\x1f<name>]      progress = 0..100
 ```
+
+Назва принтера опційна: якщо `serial.labels: "names"`, у кожен запис додається
+`\x1f<name>` (роздільник 0x1f), і на екрані деталей замість номера показується
+назва. Назва санітизується на ПК до друкованого ASCII (шрифт матриці латиниця),
+без ком і роздільника, до 16 символів. Якщо назви нема, ESP показує номер.
 
 Мапа станів PrinterStatus.status у літеру:
 

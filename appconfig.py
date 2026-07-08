@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "port": "auto",
         "baud": 115200,
+        "labels": "numbers",
     },
 }
 

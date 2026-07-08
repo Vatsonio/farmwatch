@@ -119,6 +119,7 @@ def coerce_config(data: dict) -> dict:
         sr["baud"] = int(sr.get("baud", 115200))
     except (TypeError, ValueError):
         sr["baud"] = 115200
+    sr["labels"] = "names" if str(sr.get("labels", "numbers")).lower() == "names" else "numbers"
     cfg["serial"] = sr
 
     return cfg

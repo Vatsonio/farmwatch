@@ -150,7 +150,13 @@
           <option value="115200">115200</option><option value="57600">57600</option>
           <option value="250000">250000</option><option value="9600">9600</option></select></div></div>
 
-      <div class="field"><span class="panel__hint">Changes apply after restarting the app.</span></div>
+      <div class="field"><span class="field__label">Scroll labels <small>what to show per printer</small></span>
+        <div class="field__control">
+          <select data-path="serial.labels" class="input-narrow">
+            <option value="numbers">Numbers (1, 2, 3)</option>
+            <option value="names">Printer names</option></select></div></div>
+
+      <div class="field"><span class="panel__hint">Names use the Latin font; non Latin characters are dropped. Changes apply after restarting the app.</span></div>
     </section>
 
     <!-- NOTIFICATIONS -->
