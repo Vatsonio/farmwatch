@@ -246,42 +246,128 @@ class BambuPrinterMonitor:
             logger.error(f"❌ Помилка запуску додатку: {e}")
             return False
     
-    def get_dashboard_page(self) -> Optional[dict]:
-        """Отримання сторінки Dashboard (як в export_dashboard.py)"""
+    @staticmethod
+    def _usable_page(p) -> bool:
+        return (p.get("type") == "page" and "webSocketDebuggerUrl" in p
+                and not p.get("url", "").startswith("devtools://"))
+
+    def _list_pages(self):
+        return requests.get(f"http://127.0.0.1:{self.debug_port}/json", timeout=10).json()
+
+    @staticmethod
+    def _ws_eval(ws_url: str, expression: str, timeout: float = 8.0):
+        """Виконати JS у сторінці через тимчасовий CDP websocket (для window.open / title)."""
+        ws = websocket.create_connection(ws_url, timeout=timeout)
         try:
-            resp = requests.get(f"http://127.0.0.1:{self.debug_port}/json", timeout=10)
-            pages = resp.json()
-            
+            ws.send(json.dumps({"id": 1, "method": "Runtime.enable"}))
+            ws.send(json.dumps({"id": 2, "method": "Runtime.evaluate",
+                                "params": {"expression": expression,
+                                           "returnByValue": True, "userGesture": True}}))
+            end = time.time() + timeout
+            while time.time() < end:
+                m = json.loads(ws.recv())
+                if m.get("id") == 2:
+                    return m
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+        return None
+
+    def get_dashboard_page(self) -> Optional[dict]:
+        """Знайти або ВІДКРИТИ окреме dashboard-вікно (#/monitor), не чіпаючи головне.
+
+        Оновлений клієнт має лише одне вікно. Раніше фолбек перемикав його хеш на
+        #/monitor і тим захоплював головне вікно користувача. Тепер натомість
+        відкриваємо НОВЕ вікно на #/monitor через window.open і згортаємо його.
+        """
+        try:
+            pages = self._list_pages()
             logger.info(f"Знайдено {len(pages)} вкладок:")
             for p in pages:
-                title = p.get('title', 'No title')
-                url = p.get('url', '')[:70]
-                logger.info(f"  • {title} | {url}")
-            
-            # Картки принтерів є ЛИШЕ на роуті #/monitor. Зазвичай це окреме
-            # фонове dashboard-вікно, а головне вікно лишається для користувача.
-            # Тому ПЕРШИМ ділом чіпляємось саме до #/monitor, не чіпаючи головне.
-            def _usable(p):
-                return (p.get("type") == "page" and "webSocketDebuggerUrl" in p
-                        and not p.get("url", "").startswith("devtools://"))
+                logger.info(f"  • {p.get('title', 'No title')} | {p.get('url', '')[:70]}")
 
+            # 1) вже є окреме #/monitor-вікно — використовуємо його
             for page in pages:
-                if _usable(page) and "#/monitor" in page.get("url", "").lower():
-                    logger.info(f"✓ Dashboard-вікно (#/monitor): {page.get('title')}")
+                if self._usable_page(page) and page.get("url", "").lower().endswith("#/monitor"):
+                    logger.info("✓ Використовую наявне dashboard-вікно (#/monitor)")
                     return page
 
-            # Фолбек: єдине доступне вікно (його перемкне на #/monitor
-            # connect_websocket). Якщо тримаєш dashboard окремим вікном — сюди не дійде.
-            for page in pages:
-                if _usable(page):
-                    logger.info(f"✓ Fallback page (перемкну на #/monitor): "
-                                f"{page.get('title')} | {page.get('url', '')[:50]}")
-                    return page
+            # 2) відкриваємо нове #/monitor-вікно з головного, не чіпаючи головне
+            main = next((p for p in pages if self._usable_page(p)), None)
+            if main is not None:
+                new_page = self._open_monitor_window(main)
+                if new_page is not None:
+                    return new_page
+                logger.warning("Не вдалось відкрити окреме #/monitor-вікно; "
+                               "працюю по JSON devices2 без перемикання головного")
 
-            return pages[0] if pages else None
+            # 3) останній фолбек: головне вікно (connect_websocket НЕ перемикає його хеш)
+            return main or (pages[0] if pages else None)
         except Exception as e:
             logger.error(f"Помилка отримання сторінки: {e}")
             return None
+
+    def _open_monitor_window(self, main_page: dict) -> Optional[dict]:
+        """window.open окремого вікна на #/monitor і згортання його. Головне не чіпаємо."""
+        try:
+            base = main_page.get("url", "").split("#")[0]
+            if not base:
+                return None
+            url = base + "#/monitor"
+            self._ws_eval(main_page["webSocketDebuggerUrl"],
+                          f"window.open({json.dumps(url)}, '_blank')")
+            for _ in range(24):  # до ~12с чекаємо появи нового таргета
+                time.sleep(0.5)
+                for p in self._list_pages():
+                    if self._usable_page(p) and p.get("url", "").lower().endswith("#/monitor"):
+                        logger.info("✓ Відкрито окреме dashboard-вікно (#/monitor)")
+                        self._minimize_dashboard_window(p)
+                        return p
+            return None
+        except Exception as e:
+            logger.warning(f"Не вдалось відкрити #/monitor-вікно: {e}")
+            return None
+
+    def _minimize_dashboard_window(self, page: dict):
+        """Згорнути dashboard-вікно (Windows): унікальний заголовок -> знайти hwnd -> ShowWindow."""
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            tag = f"FW_MONITOR_{os.getpid()}"
+            self._ws_eval(page["webSocketDebuggerUrl"], f"document.title={json.dumps(tag)}")
+            time.sleep(0.6)
+            hwnd = self._find_window_by_title(tag)
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+                logger.info("✓ Dashboard-вікно згорнуто")
+            else:
+                logger.debug("Вікно dashboard за заголовком не знайдено")
+            # прибрати технічний тег, лишити дружній заголовок
+            self._ws_eval(page["webSocketDebuggerUrl"], "document.title='Farm monitor (farmwatch)'")
+        except Exception as e:
+            logger.debug(f"Не вдалось згорнути dashboard-вікно: {e}")
+
+    @staticmethod
+    def _find_window_by_title(title: str):
+        import ctypes
+        found = {"hwnd": None}
+
+        def _cb(h, _l):
+            n = ctypes.windll.user32.GetWindowTextLengthW(h)
+            if n > 0:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                ctypes.windll.user32.GetWindowTextW(h, buf, n + 1)
+                if buf.value == title:
+                    found["hwnd"] = h
+                    return False
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        ctypes.windll.user32.EnumWindows(WNDENUMPROC(_cb), 0)
+        return found["hwnd"]
     
     def wait_for_page_load(self) -> bool:
         """Очікування завантаження сторінки (як в export_dashboard.py)"""
@@ -336,9 +422,11 @@ class BambuPrinterMonitor:
                 logger.error("❌ Не вдалось завантажити сторінку")
                 return False
 
-            # Картки monitor_printer є ЛИШЕ на роуті #/monitor (вид Dashboard).
-            # На інших вкладках (Printers/Tasks/Files/...) карток нема -> scrape 0.
-            self._ensure_dashboard()
+            # Перемикаємо на #/monitor ЛИШЕ якщо ми на власному dashboard-вікні.
+            # У фолбеку (головне вікно) хеш НЕ чіпаємо, щоб не захопити вікно
+            # користувача; там працює JSON devices2.
+            if page.get("url", "").lower().endswith("#/monitor"):
+                self._ensure_dashboard()
             time.sleep(2)
 
             return True
