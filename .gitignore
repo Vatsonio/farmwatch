@@ -24,8 +24,9 @@ farmwatch.ico
 # Debug HTML dumps from the printer-disappearance diagnostics
 debug_dumps/
 
-# Local config (contains the bot token)
+# Local config (contains the bot token) + its runtime backup
 config.json
+config.json.bak
 
 # Local dashboard snapshot used only for parser development
 bambu_dashboard_full/
