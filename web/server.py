@@ -227,6 +227,14 @@ async def api_save_config(request: Request):
         log.error("save failed: %s", e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     log.info("config.json saved via settings GUI")
+    # застосувати serial-налаштування дисплея НА ЛЬОТУ (без рестарту застосунку)
+    try:
+        import serial_output
+        mon = getattr(app.state, "monitor", None)
+        if mon is not None:
+            serial_output.apply_config(mon, cfg)
+    except Exception as e:
+        log.warning("serial apply failed: %s", e)
     return {"ok": True, "saved_at": datetime.now().isoformat(), "config": cfg}
 
 

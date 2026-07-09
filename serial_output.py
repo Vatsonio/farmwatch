@@ -235,6 +235,40 @@ def chain_push(monitor, display):
     monitor.on_update_complete = _chained
 
 
+def apply_config(monitor, config):
+    """Застосувати serial-конфіг НА ЛЬОТУ до запущеного монітора (без рестарту).
+
+    Викликається при збереженні налаштувань: вмикає/вимикає або перевідкриває
+    дисплей відповідно до config, якщо порт/baud/labels/enabled змінились.
+    """
+    cfg = (config or {}).get("serial", {}) if hasattr(config, "get") else {}
+    disp = getattr(monitor, "_serial_display", None)
+    if not cfg.get("enabled"):
+        if disp is not None:
+            try:
+                disp.stop()
+            except Exception:
+                pass
+            monitor._serial_display = None
+            logger.info("📟 Дисплей вимкнено в налаштуваннях")
+        return None
+
+    port = cfg.get("port", "auto")
+    baud = int(cfg.get("baud", 115200))
+    use_names = str(cfg.get("labels", "numbers")).lower() == "names"
+    if disp is not None:
+        if disp.port == port and disp.baud == baud and disp.use_names == use_names:
+            return disp  # без змін
+        try:
+            disp.stop()
+        except Exception:
+            pass
+        monitor._serial_display = None
+    logger.info("📟 Дисплей: застосовую налаштування (порт %s, labels %s)",
+                port, "names" if use_names else "numbers")
+    return attach(monitor, config)
+
+
 def attach(monitor, config):
     """Єдина точка вбудовування дисплея. Ідемпотентно: один SerialDisplay на монітор.
 
