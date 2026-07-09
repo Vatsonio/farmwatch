@@ -143,6 +143,42 @@ def _promote_tray_icon():
         winreg.CloseKey(root)
 
 
+def _kill_other_instances():
+    """Запуск нового екземпляра завершує старі (навіть іншої версії).
+
+    Працює для зібраного exe (ім'я farmwatch-gui-*.exe). Із сорсів (python.exe)
+    пропускаємо, щоб не вбити сторонні python-процеси.
+    """
+    if os.name != "nt":
+        return
+    import subprocess
+    import sys
+    try:
+        exe = os.path.basename(sys.executable).lower()
+    except Exception:
+        return
+    if not exe.startswith("farmwatch"):
+        return
+    me = os.getpid()
+    try:
+        out = subprocess.run(["tasklist", "/fo", "csv", "/nh"],
+                             capture_output=True, text=True, timeout=6).stdout or ""
+    except Exception:
+        return
+    for line in out.splitlines():
+        parts = [p.strip().strip('"') for p in line.split('","')]
+        if len(parts) < 2:
+            continue
+        name, pid = parts[0], parts[1]
+        if name.lower().startswith("farmwatch-gui"):
+            try:
+                if int(pid) != me:
+                    subprocess.run(["taskkill", "/F", "/PID", pid],
+                                   capture_output=True, timeout=6)
+            except Exception:
+                pass
+
+
 def _free_port() -> int:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 0))
@@ -301,6 +337,7 @@ def _run_app():
 
 
 def main():
+    _kill_other_instances()  # новий екземпляр завершує старі (будь-якої версії)
     _setup_file_logging()
     app.state.app_runner = _run_app  # lets /api/bot/restart relaunch the bot supervisor
     appconfig.ensure_config()

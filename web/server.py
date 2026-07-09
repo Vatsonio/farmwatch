@@ -8,11 +8,13 @@ Run:
     python -m web.server            # http://127.0.0.1:8000
 """
 
+import collections
 import json
 import logging
 import shutil
 import socket
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -52,8 +54,33 @@ app.state.bot_task = None    # the running bot.start() task (cancel to restart i
 app.state.bot_restart = False
 app.state.bot_enabled = True  # user toggle: when False the supervisor keeps the bot off
 app.state.app_runner = None  # web.gui._run_app, to relaunch the bot supervisor
-app.state.diag_cleared = set()  # diagnostics lines the user acknowledged via Clear
+app.state.events = collections.deque(maxlen=150)  # ESP + status + disappearance events for Diagnostics
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+# Значущі події збираємо в память і показуємо в панелі Diagnostics: ESP (📟),
+# зміна статусу принтера ("статус '...' → '...'"), зникнення карток, завершення друку.
+_EVENT_MARKERS = ("📟", "статус '", "ЗНИКЛИ", "0 карток", "впала", "Друк завершено")
+
+
+class _EventTap(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return
+        if not any(m in msg for m in _EVENT_MARKERS):
+            return
+        ts = time.strftime("%H:%M:%S", time.localtime(getattr(record, "created", None) or time.time()))
+        try:
+            app.state.events.append(f"{ts}  {msg}")
+        except Exception:
+            pass
+
+
+_event_tap = _EventTap()
+_event_tap.setLevel(logging.INFO)
+for _lg_name in ("printer_monitor", "serial_output"):
+    logging.getLogger(_lg_name).addHandler(_event_tap)
 
 
 # ----------------------------- config io -----------------------------
@@ -157,20 +184,6 @@ def esp_connected() -> bool:
     mon = getattr(app.state, "monitor", None)
     disp = getattr(mon, "_serial_display", None) if mon else None
     return bool(disp is not None and getattr(disp, "_ser", None) is not None)
-
-
-def diag_hits() -> list:
-    """Printer disappearance signals from the monitor log."""
-    hits = []
-    mon_log = LOG_FILES["monitor"]
-    if mon_log.exists():
-        try:
-            for ln in mon_log.read_text(encoding="utf-8", errors="replace").splitlines():
-                if ("ЗНИКЛИ" in ln) or ("0 карток" in ln) or ("впала" in ln):
-                    hits.append(ln)
-        except Exception as e:
-            hits.append(f"(could not read monitor log: {e})")
-    return hits
 
 
 def read_version() -> str:
@@ -284,20 +297,23 @@ async def api_logs(name: str = "monitor", tail: int = 200):
 
 
 @app.get("/api/diagnostics")
-async def api_diagnostics(tail: int = 60):
-    """Recent printer disappearance signals from the monitor log + dump list."""
-    cleared = getattr(app.state, "diag_cleared", set())
-    hits = [h for h in diag_hits() if h not in cleared]
+async def api_diagnostics(tail: int = 80):
+    """Recent live events: ESP connect/disconnect, printer status changes, disappearances."""
+    events = list(getattr(app.state, "events", []))[-tail:]
     dumps_dir = ROOT / "debug_dumps"
     dumps = sorted([p.name for p in dumps_dir.glob("*.html")], reverse=True) if dumps_dir.exists() else []
-    return {"disappearances": hits[-tail:], "dump_count": len(dumps), "dumps": dumps[:40]}
+    # keep the old key as an alias so an older cached frontend still shows something
+    return {"events": events, "disappearances": events, "dump_count": len(dumps), "dumps": dumps[:40]}
 
 
 @app.post("/api/diagnostics/clear")
 async def api_diagnostics_clear():
-    """Acknowledge (hide) the current disappearance signals. New ones still show."""
-    app.state.diag_cleared = set(diag_hits())
-    return {"ok": True, "cleared": len(app.state.diag_cleared)}
+    """Clear the collected events."""
+    try:
+        app.state.events.clear()
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 @app.get("/api/metrics")
@@ -345,25 +361,36 @@ def _build_monitor():
 
 
 @app.post("/api/monitor/restart")
-async def api_monitor_restart():
+async def api_monitor_restart(force: bool = False):
     """Reconnect the live metrics monitor (recovers a stale or 0 card state).
 
-    Reconnect the SAME monitor object in place rather than building a new one, so the
-    in-process bot keeps its reference and we never end up with two monitors competing
-    for the Bambu debug port.
+    Soft (default): reconnect the SAME monitor object in place, so the in-process bot
+    keeps its reference and two monitors never compete for the Bambu debug port.
+    Force: abandon the current (possibly stuck) monitor and build a fresh one. Use when
+    a soft restart hangs.
     """
     import asyncio
     loop = asyncio.get_running_loop()
     mon = app.state.monitor
-    if mon is None:
-        mon = _build_monitor()
+    if force or mon is None:
+        if mon is not None:
+            try:
+                await loop.run_in_executor(None, mon.stop)  # best effort; may be stuck
+            except Exception:
+                pass
+        new = _build_monitor()
         try:
-            ok = await loop.run_in_executor(None, mon.start)
+            import serial_output
+            serial_output.attach(new, load_config())
+        except Exception:
+            pass
+        try:
+            ok = await loop.run_in_executor(None, new.start)
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-        app.state.monitor = mon
-        return {"ok": bool(ok), "running": getattr(mon, "running", False),
-                "printers": len(mon.get_all_printers())}
+        app.state.monitor = new
+        return {"ok": bool(ok), "running": getattr(new, "running", False),
+                "printers": len(new.get_all_printers()), "forced": bool(force)}
     try:
         await loop.run_in_executor(None, mon.stop)
         ok = await loop.run_in_executor(None, mon.start)

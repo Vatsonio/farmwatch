@@ -121,8 +121,9 @@
       const espPill = $("#esp-pill");
       if (espPill) {
         espPill.style.display = s.serial_enabled ? "" : "none";
-        $("#esp-led").className = "led " + (s.esp_connected ? "on" : "warn");
-        $("#esp-label").textContent = s.esp_connected ? "ESP LIVE" : "ESP …";
+        $("#esp-led").className = "led " + (s.esp_connected ? "on" : "bad");
+        $("#esp-label").textContent = s.esp_connected ? "ESP LIVE" : "ESP OFF";
+        espPill.title = s.esp_connected ? "Display connected" : "Display enabled but not connected (check USB / power)";
       }
       setStat("s-token", s.token_set ? "set" : "missing", s.token_set ? "ok" : "bad");
       setStat("s-users", s.users);
@@ -137,11 +138,12 @@
     try {
       const d = await (await fetch("/api/diagnostics")).json();
       const box = $("#diag-list");
-      if (!d.disappearances || !d.disappearances.length) {
-        box.innerHTML = '<div class="diag-empty">No disappearance events recorded. Turn on Debug logging to capture them.</div>';
+      const list = d.events || d.disappearances || [];
+      if (!list.length) {
+        box.innerHTML = '<div class="diag-empty">No events yet. ESP connect/disconnect, printer status changes and disappearances show up here as they happen.</div>';
       } else {
         box.innerHTML = "";
-        d.disappearances.slice().reverse().forEach((ln) => {
+        list.slice().reverse().forEach((ln) => {
           const div = document.createElement("div");
           div.className = "diag-line";
           div.textContent = ln;
@@ -437,14 +439,27 @@
     };
     $("#log-copy").onclick = () => copyBtn($("#log-copy"), $("#log-view").innerText);
     $("#mon-restart").onclick = async () => {
-      const b = $("#mon-restart"), prev = b.textContent;
-      b.disabled = true; b.textContent = "Restarting";
+      const b = $("#mon-restart");
+      // second press while a restart is in flight forces a hard restart
+      if (b.dataset.busy === "1") {
+        b.textContent = "Forcing…";
+        try {
+          const r = await (await fetch("/api/monitor/restart?force=1", { method: "POST" })).json();
+          b.dataset.result = r.ok ? "Reconnected" : "No client";
+        } catch (e) { b.dataset.result = "Error"; }
+        loadMetrics();
+        return;
+      }
+      b.dataset.busy = "1"; b.dataset.result = "";
+      b.textContent = "Force restart";  // press again to force while this runs
       try {
         const r = await (await fetch("/api/monitor/restart", { method: "POST" })).json();
-        b.textContent = r.ok ? "Reconnected" : "No client";
-      } catch (e) { b.textContent = "Error"; }
+        if (!b.dataset.result) b.dataset.result = r.ok ? "Reconnected" : "No client";
+      } catch (e) { if (!b.dataset.result) b.dataset.result = "Error"; }
       loadMetrics();
-      setTimeout(() => { b.textContent = prev; b.disabled = false; }, 1600);
+      b.textContent = b.dataset.result || "Reconnected";
+      b.dataset.busy = "0";
+      setTimeout(() => { if (b.dataset.busy !== "1") b.textContent = "Restart monitor"; }, 1800);
     };
     $("#bot-power").onclick = async () => {
       const b = $("#bot-power");

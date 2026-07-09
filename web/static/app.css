@@ -99,6 +99,7 @@ body{
 .led.on{--c:var(--ok);--ring:rgba(87,176,131,0.16);}
 .led.off{--c:var(--text-muted);}
 .led.warn{--c:var(--warn);--ring:rgba(210,161,63,0.16);}
+.led.bad{--c:var(--bad);--ring:rgba(211,103,92,0.18);}
 
 /* ============================================================
    command bar
