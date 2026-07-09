@@ -83,12 +83,19 @@ def _entry(printer, use_names=False):
     return entry
 
 
+def _natural_key(name):
+    """Ключ натурального сортування: '2. A1' < '10. A1', числа рахуються як числа."""
+    return [(0, int(t)) if t.isdigit() else (1, t.lower())
+            for t in re.findall(r"\d+|\D+", str(name or ""))]
+
+
 def build_frame(printers, use_names=False):
     """Будує кадр FW|<count>|<entry>,... Обрізає до 8 принтерів (стільки влазить на дисплей).
 
+    Принтери сортуються натурально за назвою (1, 2, 3 ... а не порядок скрапу).
     use_names=True додає назву принтера в кожен запис (для показу назв замість номерів).
     """
-    printers = list(printers or [])
+    printers = sorted(list(printers or []), key=lambda p: _natural_key(getattr(p, "name", "")))
     shown = printers[:_MAX_PRINTERS]
     if len(printers) > _MAX_PRINTERS:
         logger.warning("📟 Дисплей: %d принтерів, показуємо перші %d", len(printers), _MAX_PRINTERS)
