@@ -34,6 +34,9 @@ bambu_dashboard_full/
 # Tooling scratch dir
 .planning/
 
+# Session chat transcript (large, kept locally; commit consciously if wanted)
+chat/
+
 # IDE / editor
 .idea/
 .vscode/
