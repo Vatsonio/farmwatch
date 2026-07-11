@@ -109,16 +109,23 @@ class SerialDisplay:
     Відправка окремим потоком, незалежно від повільного циклу монітора (10..60 с):
     ESP отримує стабільний heartbeat і завжди свіжий стан. Порт відкривається
     ліниво з backoff, помилки не валять farmwatch.
+
+    Шлються лише СПРАВЖНІ дані монітора: до першого push і після того, як
+    монітор замовк на stale_after секунд (клієнт закрили, ПК спав, WS відпав),
+    відправка мовчить, і ESP чесно показує NO LINK замість застарілого стану.
     """
 
-    def __init__(self, port, baud=115200, heartbeat=2.0, use_names=False, serial_factory=None):
+    def __init__(self, port, baud=115200, heartbeat=2.0, use_names=False,
+                 serial_factory=None, stale_after=150.0):
         self.port = port
         self.baud = baud
         self.heartbeat = heartbeat
         self.use_names = use_names
+        self.stale_after = stale_after  # None = слати вічно (як раніше)
         self._serial_factory = serial_factory  # інʼєкція для тестів; інакше pyserial
         self._ser = None
-        self._last_frame = "FW|0|\n"
+        self._last_frame = None         # нема даних, поки монітор не дав перший стан
+        self._last_push = None
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
@@ -128,6 +135,19 @@ class SerialDisplay:
         frame = build_frame(printers, self.use_names)
         with self._lock:
             self._last_frame = frame
+            self._last_push = time.monotonic()
+
+    def _frame_to_send(self):
+        """Свіжий кадр або None, якщо даних ще нема / монітор давно мовчить."""
+        with self._lock:
+            frame = self._last_frame
+            pushed = self._last_push
+        if frame is None:
+            return None
+        if (self.stale_after is not None and pushed is not None
+                and time.monotonic() - pushed > self.stale_after):
+            return None
+        return frame
 
     def start(self):
         if self._running:
@@ -185,13 +205,16 @@ class SerialDisplay:
     def _loop(self):
         backoff = 1.0
         while self._running:
+            frame = self._frame_to_send()
+            if frame is None:
+                # мовчимо: без кадрів ESP сам перейде у NO LINK за кілька секунд
+                time.sleep(self.heartbeat)
+                continue
             if not self._open():
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
                 continue
             backoff = 1.0
-            with self._lock:
-                frame = self._last_frame
             try:
                 self._ser.write(frame.encode("ascii", "ignore"))
                 flush = getattr(self._ser, "flush", None)
@@ -204,6 +227,15 @@ class SerialDisplay:
             time.sleep(self.heartbeat)
 
 
+def _stale_after_from_config(config):
+    """Поріг застарілості кадру: кілька пропущених циклів монітора з запасом."""
+    try:
+        interval = int((config or {}).get("monitor", {}).get("update_interval", 20))
+    except (TypeError, ValueError, AttributeError):
+        interval = 20
+    return max(90.0, interval * 2.5 + 30.0)
+
+
 def create_from_config(config):
     """Створити і запустити SerialDisplay якщо config['serial']['enabled']. Інакше None.
 
@@ -214,7 +246,9 @@ def create_from_config(config):
         if not cfg.get("enabled"):
             return None
         use_names = str(cfg.get("labels", "numbers")).lower() == "names"
-        disp = SerialDisplay(cfg.get("port", "auto"), int(cfg.get("baud", 115200)), use_names=use_names)
+        disp = SerialDisplay(cfg.get("port", "auto"), int(cfg.get("baud", 115200)),
+                             use_names=use_names,
+                             stale_after=_stale_after_from_config(config))
         disp.start()
         return disp
     except Exception as e:
@@ -265,6 +299,7 @@ def apply_config(monitor, config):
     use_names = str(cfg.get("labels", "numbers")).lower() == "names"
     if disp is not None:
         if disp.port == port and disp.baud == baud and disp.use_names == use_names:
+            disp.stale_after = _stale_after_from_config(config)  # міг змінитись update_interval
             return disp  # без змін
         try:
             disp.stop()

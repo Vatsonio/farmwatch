@@ -135,6 +135,46 @@ class SenderTests(unittest.TestCase):
         time.sleep(0.15)
         disp.stop()  # не має кинути виняток
 
+    def test_silent_before_first_push(self):
+        # до першого push нема чого казати ESP: мовчимо, ESP покаже NO LINK
+        fake = FakeSerial()
+        disp = SerialDisplay("COMX", heartbeat=0.05,
+                             serial_factory=lambda port, baud: fake)
+        disp.start()
+        time.sleep(0.2)
+        disp.stop()
+        self.assertEqual(fake.writes, [])
+
+    def test_stops_sending_when_stale(self):
+        # монітор замовк (клієнт умер, ПК спав) -> перестаємо слати застарілий
+        # кадр, ESP чесно показує NO LINK замість вчорашнього стану
+        fake = FakeSerial()
+        disp = SerialDisplay("COMX", heartbeat=0.05, stale_after=0.15,
+                             serial_factory=lambda port, baud: fake)
+        disp.push([_p("printing", 33)])
+        disp.start()
+        time.sleep(0.1)
+        n_early = len(fake.writes)
+        time.sleep(0.4)
+        n_late = len(fake.writes)
+        disp.stop()
+        self.assertGreater(n_early, 0)
+        self.assertLessEqual(n_late - n_early, 2)  # хіба кадр-два "у польоті"
+
+    def test_fresh_push_resumes_after_stale(self):
+        fake = FakeSerial()
+        disp = SerialDisplay("COMX", heartbeat=0.05, stale_after=0.15,
+                             serial_factory=lambda port, baud: fake)
+        disp.push([_p("idle", 0)])
+        disp.start()
+        time.sleep(0.4)  # дані застаріли, відправка стала
+        n_stale = len(fake.writes)
+        disp.push([_p("printing", 50)])
+        time.sleep(0.2)
+        disp.stop()
+        written = b"".join(fake.writes[n_stale:]).decode("ascii")
+        self.assertIn("FW|1|p50\n", written)
+
 
 if __name__ == "__main__":
     unittest.main()
