@@ -143,6 +143,10 @@ class BambuPrinterMonitor:
         self._last_parse_stats: dict = {}            # статистика останнього парсингу
         self._cycle_seq = 0                          # лічильник циклів оновлення
         self._debug_handler = None                   # окремий file-handler для debug
+        # --- watchdog замерзлого dashboard-вікна ---
+        self._devices2_misses = 0                    # скільки циклів поспіль без devices2
+        self._last_dashboard_reload = 0.0            # monotonic час останнього reload
+        self._connected_to_monitor = False           # WS саме до #/monitor-вікна
         self.running = False
         self.ws_connection: Optional[websocket.WebSocket] = None
         self.monitor_thread: Optional[threading.Thread] = None
@@ -227,7 +231,13 @@ class BambuPrinterMonitor:
         try:
             logger.info("🚀 Запускаємо Bambu Farm Manager Client...")
             self.app_process = subprocess.Popen(
-                [self.exe_path, f"--remote-debugging-port={self.debug_port}", "--remote-allow-origins=*"],
+                [self.exe_path, f"--remote-debugging-port={self.debug_port}", "--remote-allow-origins=*",
+                 # Наше #/monitor-вікно згорнуте, і Chromium у фоні тротлить таймери
+                 # сторінки: вона перестає полити devices2 і DOM замерзає зі старими
+                 # статусами. Ці прапорці вимикають фонове пригальмовування.
+                 "--disable-background-timer-throttling",
+                 "--disable-backgrounding-occluded-windows",
+                 "--disable-renderer-backgrounding"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
@@ -290,11 +300,15 @@ class BambuPrinterMonitor:
             for p in pages:
                 logger.info(f"  • {p.get('title', 'No title')} | {p.get('url', '')[:70]}")
 
-            # 1) вже є окреме #/monitor-вікно — використовуємо його
-            for page in pages:
-                if self._usable_page(page) and page.get("url", "").lower().endswith("#/monitor"):
-                    logger.info("✓ Використовую наявне dashboard-вікно (#/monitor)")
-                    return page
+            # 1) вже є окреме #/monitor-вікно — використовуємо його.
+            # Наше (титуловане) вікно у пріоритеті: користувач міг відкрити свій
+            # dashboard поруч, його вікно не чіпаємо, якщо є наше.
+            monitors = [p for p in pages if self._usable_page(p)
+                        and p.get("url", "").lower().endswith("#/monitor")]
+            monitors.sort(key=lambda p: 0 if p.get("title") == "Farm monitor (farmwatch)" else 1)
+            if monitors:
+                logger.info("✓ Використовую наявне dashboard-вікно (#/monitor)")
+                return monitors[0]
 
             # 2) відкриваємо нове #/monitor-вікно з головного, не чіпаючи головне
             main = next((p for p in pages if self._usable_page(p)), None)
@@ -427,8 +441,17 @@ class BambuPrinterMonitor:
             # Перемикаємо на #/monitor ЛИШЕ якщо ми на власному dashboard-вікні.
             # У фолбеку (головне вікно) хеш НЕ чіпаємо, щоб не захопити вікно
             # користувача; там працює JSON devices2.
-            if page.get("url", "").lower().endswith("#/monitor"):
+            self._connected_to_monitor = page.get("url", "").lower().endswith("#/monitor")
+            if self._connected_to_monitor:
                 self._ensure_dashboard()
+                # повернути дружній титул (після reload сторінки він скидається
+                # на index.html і вікно важче впізнати)
+                try:
+                    self._send_command(8, "Runtime.evaluate", {
+                        "expression": "document.title='Farm monitor (farmwatch)'",
+                        "awaitPromise": False})
+                except Exception:
+                    pass
             time.sleep(2)
 
             return True
@@ -446,6 +469,31 @@ class BambuPrinterMonitor:
             })
         except Exception as e:
             logger.debug(f"Не вдалось перемкнути на #/monitor: {e}")
+
+    def _reload_dashboard_if_frozen(self):
+        """Оживити замерзле dashboard-вікно перезавантаженням сторінки.
+
+        Згорнуте вікно Chromium може пригальмувати попри прапорці (або клієнт
+        запущено без них): сторінка перестає полити devices2 і DOM замерзає зі
+        старими статусами. Кілька циклів поспіль без devices2 це і є симптом.
+        Reload лише нашого #/monitor-вікна і не частіше разу на 10 хвилин
+        (devices2 може мовчати і через недоступний сервер ферми).
+        """
+        if not self._connected_to_monitor:
+            return
+        if time.monotonic() - self._last_dashboard_reload < 600:
+            return
+        self._last_dashboard_reload = time.monotonic()
+        try:
+            logger.info("🔄 devices2 давно мовчить, перезавантажую dashboard-вікно")
+            self._send_command(130, "Page.reload", {"ignoreCache": False})
+            time.sleep(6)  # дати сторінці піднятись до наступних команд
+            self._send_command(131, "Runtime.evaluate", {
+                "expression": "document.title='Farm monitor (farmwatch)'",
+                "awaitPromise": False})
+            self._ensure_dashboard()
+        except Exception as e:
+            logger.debug(f"Не вдалось перезавантажити dashboard-вікно: {e}")
 
     def _send_command(self, cmd_id: int, method: str, params: Optional[dict] = None) -> dict:
         """Відправка команди через WebSocket"""
@@ -970,9 +1018,17 @@ class BambuPrinterMonitor:
                 logger.debug(f"devices2 JSON недоступний, фолбек на DOM: {e}")
 
             if devices is not None:
+                self._devices2_misses = 0
                 new_printers = self._parse_devices_json(devices)
                 logger.debug("✓ дані з devices2 JSON: %d принтерів", len(new_printers))
                 return self._finish_update(new_printers, None)
+
+            # devices2 не бачили: якщо це вже системно, наше згорнуте вікно
+            # найпевніше замерзло у фоні і DOM нижче віддасть застарілі статуси
+            self._devices2_misses += 1
+            if self._devices2_misses >= 3:
+                self._devices2_misses = 0
+                self._reload_dashboard_if_frozen()
 
             # ---- Фолбек: парсинг DOM (#/monitor) ----
             html = None
