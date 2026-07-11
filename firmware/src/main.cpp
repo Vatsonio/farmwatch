@@ -29,6 +29,11 @@ MD_Parola P = MD_Parola(HARDWARE_TYPE, PIN_DATA, PIN_CLK, PIN_CS, MAX_DEVICES);
 // --- стан ферми ---
 static const uint8_t MAX_PRINTERS = 8;
 static const uint32_t LINK_TIMEOUT_MS = 6000;
+// Довгий NO LINK: USB CDC після сну ПК або ре-енумерації інколи зависає так,
+// що кадри вже не доходять. М'який рестарт переініціалізовує USB Serial/JTAG,
+// ефект як перетикання кабелю. Поки farmwatch вимкнений, рестарт раз на 5 хв
+// непомітний: дисплей за мить знову показує NO LINK.
+static const uint32_t NO_LINK_REBOOT_MS = 5UL * 60UL * 1000UL;
 
 struct Printer { char st; uint8_t progress; };
 Printer cur[MAX_PRINTERS];
@@ -223,6 +228,8 @@ void setup() {
 
 void loop() {
   readSerial();
+
+  if ((millis() - lastFrameMs) > NO_LINK_REBOOT_MS) ESP.restart();
 
   // подія перебиває поточний екран одразу
   if (!evtActive && ovHead != ovTail) {
