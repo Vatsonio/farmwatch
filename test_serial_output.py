@@ -8,8 +8,9 @@ import serial_output
 from serial_output import build_frame, SerialDisplay, autodetect_port, _ascii_name
 
 
-def _p(status, progress, online=True, name=""):
-    return SimpleNamespace(status=status, progress=progress, online=online, name=name)
+def _p(status, progress, online=True, name="", serial=""):
+    return SimpleNamespace(status=status, progress=progress, online=online,
+                           name=name, serial=serial)
 
 
 def _port(device, vid):
@@ -91,6 +92,29 @@ class NameTests(unittest.TestCase):
 
     def test_ascii_name_removes_separator_char(self):
         self.assertNotIn("\x1f", _ascii_name("A1\x1fB2"))
+
+
+class OrderTests(unittest.TestCase):
+    def test_number_prefix_then_serial(self):
+        # порядок як на дашборді клієнта: число з назви головне, при однаковому
+        # числі перемагає менший серійник ("1. mini" 0309.. перед "1. A1" 0391..)
+        printers = [
+            _p("idle", 0, name="2. A1", serial="03919D551809659"),
+            _p("printing", 50, name="1. A1", serial="03919D531203269"),
+            _p("printing", 61, name="1. mini", serial="0309DA521602271"),
+        ]
+        frame = build_frame(printers, use_names=True)
+        self.assertEqual(frame, "FW|3|p61\x1f1. mini,p50\x1f1. A1,i0\x1f2. A1\n")
+
+    def test_natural_numbers_not_lexicographic(self):
+        printers = [_p("idle", 0, name="10. A1"), _p("idle", 0, name="2. A1")]
+        frame = build_frame(printers, use_names=True)
+        self.assertEqual(frame, "FW|2|i0\x1f2. A1,i0\x1f10. A1\n")
+
+    def test_no_number_falls_back_to_name(self):
+        printers = [_p("idle", 0, name="Beta"), _p("idle", 0, name="Alpha")]
+        frame = build_frame(printers, use_names=True)
+        self.assertEqual(frame, "FW|2|i0\x1fAlpha,i0\x1fBeta\n")
 
 
 class AutodetectTests(unittest.TestCase):

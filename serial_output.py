@@ -89,13 +89,25 @@ def _natural_key(name):
             for t in re.findall(r"\d+|\D+", str(name or ""))]
 
 
+def _order_key(printer):
+    """Порядок як на дашборді клієнта: головний ранг це число на початку назви,
+    а в межах одного числа перемагає менший серійник (dev_id), тому "1. mini"
+    стоїть перед "1. A1" так само, як на моніторі Bambu Farm. Без числа в назві
+    лишається натуральне сортування за назвою."""
+    name = str(getattr(printer, "name", "") or "")
+    m = re.match(r"\s*(\d+)", name)
+    num = int(m.group(1)) if m else float("inf")
+    serial = str(getattr(printer, "serial", "") or "")
+    return (num, serial, _natural_key(name))
+
+
 def build_frame(printers, use_names=False):
     """Будує кадр FW|<count>|<entry>,... Обрізає до 8 принтерів (стільки влазить на дисплей).
 
-    Принтери сортуються натурально за назвою (1, 2, 3 ... а не порядок скрапу).
+    Порядок: число з назви, далі серійник, далі назва (див. _order_key).
     use_names=True додає назву принтера в кожен запис (для показу назв замість номерів).
     """
-    printers = sorted(list(printers or []), key=lambda p: _natural_key(getattr(p, "name", "")))
+    printers = sorted(list(printers or []), key=_order_key)
     shown = printers[:_MAX_PRINTERS]
     if len(printers) > _MAX_PRINTERS:
         logger.warning("📟 Дисплей: %d принтерів, показуємо перші %d", len(printers), _MAX_PRINTERS)
