@@ -173,8 +173,10 @@ class BambuPrinterMonitor:
     def _is_process_running(self) -> bool:
         """Чи запущений процес Bambu Farm Manager Client (будь-який інстанс)"""
         try:
+            # /FO CSV: таблична видача обрізає Image Name до 25 символів, тож
+            # "Bambu Farm Manager Client.exe" у ній ніколи не знаходився
             result = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {self._process_name()}", "/NH"],
+                ["tasklist", "/FI", f"IMAGENAME eq {self._process_name()}", "/FO", "CSV", "/NH"],
                 capture_output=True, text=True, timeout=10
             )
             return self._process_name().lower() in result.stdout.lower()
