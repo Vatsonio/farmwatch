@@ -56,8 +56,10 @@ void enqueueOverlay(uint8_t type, uint8_t idx) {
 }
 
 // --- парсинг кадру ---
-char lineBuf[128];
-uint8_t lineLen = 0;
+// 8 принтерів з 16-символьними назвами = до ~185 байт кадру, тож 256
+char lineBuf[256];
+uint16_t lineLen = 0;
+bool lineOverflow = false;
 
 void applyFrame() {
   if (strncmp(lineBuf, "FW|", 3) != 0) return;
@@ -118,13 +120,18 @@ void readSerial() {
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\n') {
-      lineBuf[lineLen] = '\0';
-      applyFrame();
+      if (!lineOverflow) {
+        lineBuf[lineLen] = '\0';
+        applyFrame();
+      }
       lineLen = 0;
-    } else if (c != '\r' && lineLen < sizeof(lineBuf) - 1) {
+      lineOverflow = false;
+    } else if (c == '\r') {
+      // ігноруємо
+    } else if (lineLen < sizeof(lineBuf) - 1) {
       lineBuf[lineLen++] = c;
-    } else if (lineLen >= sizeof(lineBuf) - 1) {
-      lineLen = 0;
+    } else {
+      lineOverflow = true;  // задовгий рядок: викидаємо цілком до '\n'
     }
   }
 }
@@ -187,7 +194,10 @@ void loadScreen() {
 void startEvent() {
   Overlay ov = ovq[ovHead];
   ovHead = (ovHead + 1) % MAX_PRINTERS;
-  if (ov.type == 1) sprintf(evtText, "DONE %d", ov.idx + 1);
+  // назва принтера якщо є (номер позиції в сортуванні бреше про принтер)
+  if (ov.idx < printerCount && pname[ov.idx][0])
+    sprintf(evtText, "%s %s", ov.type == 1 ? "DONE" : "ERR", pname[ov.idx]);
+  else if (ov.type == 1) sprintf(evtText, "DONE %d", ov.idx + 1);
   else sprintf(evtText, "ERR %d", ov.idx + 1);
   evtActive = true;
   // яскравий сплив: заїзд знизу, виїзд згори, з паузою
