@@ -17,11 +17,14 @@ def _port(device, vid):
 
 
 class FakeSerial:
-    def __init__(self):
+    def __init__(self, fail_writes=False):
         self.writes = []
         self.closed = False
+        self.fail_writes = fail_writes
 
     def write(self, b):
+        if self.fail_writes:
+            raise OSError("порт завис")
         self.writes.append(b)
         return len(b)
 
@@ -174,6 +177,41 @@ class SenderTests(unittest.TestCase):
         disp.stop()
         written = b"".join(fake.writes[n_stale:]).decode("ascii")
         self.assertIn("FW|1|p50\n", written)
+
+    def test_write_failure_reopens_port(self):
+        # завислий CDC порт: помилка запису закриває порт, наступний heartbeat
+        # відкриває свіжий (після ре-енумерації USB це нове зʼєднання, яке працює)
+        fakes = []
+
+        def factory(port, baud):
+            f = FakeSerial(fail_writes=(len(fakes) == 0))  # перший порт "завис"
+            fakes.append(f)
+            return f
+
+        disp = SerialDisplay("COMX", heartbeat=0.02, serial_factory=factory)
+        disp.push([_p("printing", 10)])
+        disp.start()
+        time.sleep(0.5)
+        disp.stop()
+        self.assertGreaterEqual(len(fakes), 2)     # порт перевідкрився
+        self.assertTrue(fakes[0].closed)           # завислий закрито
+        written = b"".join(fakes[1].writes).decode("ascii")
+        self.assertIn("FW|1|p10\n", written)       # свіже зʼєднання шле кадри
+
+    def test_attach_pushes_current_state_immediately(self):
+        # вмикання дисплея у налаштуваннях не має чекати наступного циклу
+        # монітора: attach одразу віддає поточний стан
+        mon = SimpleNamespace(on_update_complete=None,
+                              get_all_printers=lambda: [_p("printing", 42)],
+                              _serial_display=None)
+        cfg = {"serial": {"enabled": True, "port": "COM255", "baud": 115200}}
+        disp = serial_output.attach(mon, cfg)
+        try:
+            self.assertIsNotNone(disp)
+            self.assertEqual(disp._last_frame, "FW|1|p42\n")
+        finally:
+            if disp is not None:
+                disp.stop()
 
 
 if __name__ == "__main__":

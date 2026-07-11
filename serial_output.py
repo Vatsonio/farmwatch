@@ -169,7 +169,9 @@ class SerialDisplay:
 
     def _pyserial_factory(self, port, baud):
         import serial  # ленивий імпорт: farmwatch не залежить від pyserial жорстко
-        return serial.Serial(port, baud, timeout=1)
+        # write_timeout обовʼязковий: на завислому USB CDC (після сну ПК тощо)
+        # write() без нього блокується вічно і потік дисплея тихо вмирає
+        return serial.Serial(port, baud, timeout=1, write_timeout=2)
 
     def _resolve_port(self):
         """Порт з конфігу, або автопошук якщо він 'auto'/порожній. Перерішується щоразу."""
@@ -216,10 +218,9 @@ class SerialDisplay:
                 continue
             backoff = 1.0
             try:
+                # без flush(): FlushFileBuffers на завислому CDC блокується вічно,
+                # а кадр і так крихітний і повторюється кожен heartbeat
                 self._ser.write(frame.encode("ascii", "ignore"))
-                flush = getattr(self._ser, "flush", None)
-                if callable(flush):
-                    flush()
             except Exception as e:
                 logger.warning("📟 Дисплей: помилка запису: %s", e)
                 self._close()
@@ -327,6 +328,14 @@ def attach(monitor, config):
                 return None
             monitor._serial_display = disp
         chain_push(monitor, disp)
+        # одразу віддати поточний стан, не чекаючи наступного циклу монітора
+        # (інакше після вмикання в налаштуваннях ESP до хвилини висить у NO LINK)
+        try:
+            printers = monitor.get_all_printers()
+            if printers:
+                disp.push(printers)
+        except Exception:
+            pass
         return disp
     except Exception as e:
         logger.warning("📟 Дисплей: не приєднано: %s", e)
