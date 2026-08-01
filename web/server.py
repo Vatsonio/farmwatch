@@ -357,13 +357,16 @@ async def api_metrics():
 
 
 def _build_monitor():
+    """Свіжий монітор за конфігом. auto_launch береться з налаштувань: інакше
+    кнопка Force restart створювала монітор, який не має права підняти клієнт,
+    і при мертвому клієнті рестарт нічого не лікував."""
     from printer_monitor import BambuPrinterMonitor, BAMBU_EXE_PATH
     cfg = load_config().get("monitor", {})
     return BambuPrinterMonitor(
         debug_port=cfg.get("debug_port", 9222),
         update_interval=cfg.get("update_interval", 30),
         exe_path=cfg.get("exe_path", BAMBU_EXE_PATH),
-        auto_launch=False,
+        auto_launch=bool(cfg.get("auto_launch", True)),
         debug_logging=bool(cfg.get("debug_logging", False)),
     )
 
