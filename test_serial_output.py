@@ -1,5 +1,6 @@
 """Тести формату кадру і відправника SerialDisplay. Без заліза (fake serial)."""
 
+import importlib
 import time
 import unittest
 from types import SimpleNamespace
@@ -221,6 +222,54 @@ class SenderTests(unittest.TestCase):
         self.assertTrue(fakes[0].closed)           # завислий закрито
         written = b"".join(fakes[1].writes).decode("ascii")
         self.assertIn("FW|1|p10\n", written)       # свіже зʼєднання шле кадри
+
+    def test_stop_is_fast_even_during_backoff(self):
+        # порт не відкривається -> потік у backoff; stop() має звільнити його
+        # негайно, інакше новий монітор не зможе відкрити той самий COM
+        def boom(port, baud):
+            raise OSError("порт зайнятий")
+
+        disp = SerialDisplay("COMX", heartbeat=0.02, serial_factory=boom)
+        disp.push([_p("idle", 0)])
+        disp.start()
+        time.sleep(0.5)  # backoff уже виріс
+        t0 = time.monotonic()
+        disp.stop()
+        self.assertLess(time.monotonic() - t0, 3)
+        self.assertFalse(disp._thread)
+
+    def test_falls_back_to_autodetect_after_repeated_failures(self):
+        # ESP перепідключився під іншим номером COM: після кількох невдач
+        # пробуємо автопошук замість вічного стуку в мертвий порт
+        disp = SerialDisplay("COM4")
+        serial_output.autodetect_port = lambda ports=None: "COM9"
+        try:
+            self.assertEqual(disp._resolve_port(), "COM4")   # спершу як налаштовано
+            disp._open_fails = 3
+            self.assertEqual(disp._resolve_port(), "COM9")   # далі знайдений ESP
+        finally:
+            importlib.reload(serial_output)
+
+    def test_chain_push_is_idempotent(self):
+        # attach() кличеться при кожному збереженні налаштувань і рестарті бота;
+        # без цього кожен виклик намотував ще один шар і кадр будувався N разів
+        pushes = []
+        display = SimpleNamespace(push=lambda printers: pushes.append(1))
+        mon = SimpleNamespace(on_update_complete=None,
+                              get_all_printers=lambda: [_p("idle", 0)])
+        for _ in range(5):
+            serial_output.chain_push(mon, display)
+        mon.on_update_complete()
+        self.assertEqual(len(pushes), 1)
+
+    def test_chain_push_keeps_foreign_callback(self):
+        calls = []
+        display = SimpleNamespace(push=lambda printers: calls.append("display"))
+        mon = SimpleNamespace(on_update_complete=lambda: calls.append("bot"),
+                              get_all_printers=lambda: [])
+        serial_output.chain_push(mon, display)
+        mon.on_update_complete()
+        self.assertEqual(calls, ["bot", "display"])
 
     def test_attach_pushes_current_state_immediately(self):
         # вмикання дисплея у налаштуваннях не має чекати наступного циклу

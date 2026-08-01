@@ -138,9 +138,14 @@ class SerialDisplay:
         self._ser = None
         self._last_frame = None         # нема даних, поки монітор не дав перший стан
         self._last_push = None
+        self._open_fails = 0            # невдалі відкриття поспіль (для фолбеку на автопошук)
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
+        # Сон потоку через Event: stop() має звільняти COM порт одразу, інакше
+        # потік досипає свій backoff (до 30с) і тримає порт, поки новий монітор
+        # уже намагається його відкрити — звідси відвали ESP після рестарту.
+        self._wake = threading.Event()
 
     def push(self, printers):
         """Оновити останній відомий кадр. Викликається з колбека монітора, не блокує."""
@@ -165,15 +170,20 @@ class SerialDisplay:
         if self._running:
             return
         self._running = True
+        self._wake.clear()
         self._thread = threading.Thread(target=self._loop, name="SerialDisplay", daemon=True)
         self._thread.start()
         logger.info("📟 Дисплей: старт, порт %s @ %d", self.port, self.baud)
 
     def stop(self):
         self._running = False
+        self._wake.set()  # перервати сон/backoff, щоб порт звільнився негайно
         t = self._thread
         if t:
-            t.join(timeout=self.heartbeat + 1)
+            t.join(timeout=5)
+            if t.is_alive():
+                logger.warning("📟 Дисплей: потік не завершився, порт може бути зайнятий")
+        self._thread = None
         self._close()
         logger.info("📟 Дисплей: стоп")
 
@@ -186,8 +196,20 @@ class SerialDisplay:
         return serial.Serial(port, baud, timeout=1, write_timeout=2)
 
     def _resolve_port(self):
-        """Порт з конфігу, або автопошук якщо він 'auto'/порожній. Перерішується щоразу."""
+        """Порт з конфігу, або автопошук якщо він 'auto'/порожній. Перерішується щоразу.
+
+        Якщо явно заданий порт кілька разів поспіль не відкривається, пробуємо
+        автопошук: після ре-енумерації USB (сон ПК, самоперезавантаження плати)
+        ESP цілком може зʼявитись під іншим номером COM, і чекати на старий вічно
+        означає мертвий дисплей до ручного втручання.
+        """
         if self.port and str(self.port).lower() != "auto":
+            if self._open_fails >= 3:
+                found = autodetect_port()
+                if found and found != self.port:
+                    logger.info("📟 Дисплей: %s не відповідає, ESP знайдено на %s",
+                                self.port, found)
+                    return found
             return self.port
         return autodetect_port()
 
@@ -196,14 +218,17 @@ class SerialDisplay:
             return True
         port = self._resolve_port()
         if not port:
+            self._open_fails += 1
             logger.warning("📟 Дисплей: ESP не знайдено (автопошук)")
             return False
         factory = self._serial_factory or self._pyserial_factory
         try:
             self._ser = factory(port, self.baud)
+            self._open_fails = 0
             logger.info("📟 Дисплей: порт %s відкрито", port)
             return True
         except Exception as e:
+            self._open_fails += 1
             logger.warning("📟 Дисплей: не відкрити порт %s: %s", port, e)
             self._ser = None
             return False
@@ -222,10 +247,10 @@ class SerialDisplay:
             frame = self._frame_to_send()
             if frame is None:
                 # мовчимо: без кадрів ESP сам перейде у NO LINK за кілька секунд
-                time.sleep(self.heartbeat)
+                self._wake.wait(self.heartbeat)
                 continue
             if not self._open():
-                time.sleep(backoff)
+                self._wake.wait(backoff)
                 backoff = min(backoff * 2, 30.0)
                 continue
             backoff = 1.0
@@ -237,7 +262,7 @@ class SerialDisplay:
                 logger.warning("📟 Дисплей: помилка запису: %s", e)
                 self._close()
                 continue
-            time.sleep(self.heartbeat)
+            self._wake.wait(self.heartbeat)
 
 
 def _stale_after_from_config(config):
@@ -273,10 +298,15 @@ def chain_push(monitor, display):
     """Дочепити display.push(printers) до наявного monitor.on_update_complete.
 
     Зберігає попередній колбек (бот/веб) і кличе обидва. No-op якщо display None.
+    Ідемпотентно: attach() кличеться при кожному збереженні налаштувань і рестарті
+    бота, а без цієї перевірки кожен виклик намотував ще один шар обгорток і кадр
+    будувався по N разів за цикл.
     """
     if display is None:
         return
     prev = getattr(monitor, "on_update_complete", None)
+    if getattr(prev, "_fw_display", None) is display:
+        return  # цей дисплей уже дочеплений
 
     def _chained():
         if prev:
@@ -286,6 +316,7 @@ def chain_push(monitor, display):
         except Exception as e:
             logger.warning("📟 Дисплей: push помилка: %s", e)
 
+    _chained._fw_display = display
     monitor.on_update_complete = _chained
 
 
