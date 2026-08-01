@@ -162,7 +162,10 @@ void readSerial() {
 }
 
 // --- побудова тексту ---
-bool linkLost() { return (millis() - lastFrameMs) > LINK_TIMEOUT_MS; }
+// Поки не прийшов ЖОДЕН кадр, звʼязку нема за визначенням: інакше на межі
+// таймауту (одразу після ввімкнення чи ребуту) на мить блимало
+// "PRINT 0 ERR 0 IDLE 0 DONE 0" замість чесного NO LINK.
+bool linkLost() { return !haveFirst || (millis() - lastFrameMs) > LINK_TIMEOUT_MS; }
 
 void stateWord(char st, uint8_t prog, char *out) {
   switch (st) {
