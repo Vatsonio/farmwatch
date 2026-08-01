@@ -5,18 +5,27 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <deque>
 
 extern uint32_t g_millis;
 static inline uint32_t millis() { return g_millis; }
 static inline void btStop() {}
 
+// Буфер приймача: дані докладаються порціями, як у справжньому UART/CDC.
+// Віртуальний ESP наповнює його з окремого потоку (під власним мьютексом),
+// тест парсера користується ним однопотоково.
 struct StubSerial {
-  const char *buf = nullptr;
-  size_t pos = 0, len = 0;
+  std::deque<char> q;
   void begin(long) {}
-  void feed(const char *s) { buf = s; pos = 0; len = strlen(s); }
-  int available() { return (int)(len - pos); }
-  int read() { return pos < len ? (unsigned char)buf[pos++] : -1; }
+  void feed(const char *s) { push(s, strlen(s)); }
+  void push(const char *s, size_t n) { for (size_t i = 0; i < n; i++) q.push_back(s[i]); }
+  int available() { return (int)q.size(); }
+  int read() {
+    if (q.empty()) return -1;
+    char c = q.front();
+    q.pop_front();
+    return (unsigned char)c;
+  }
 };
 extern StubSerial Serial;
 
