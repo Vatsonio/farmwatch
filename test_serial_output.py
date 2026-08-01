@@ -250,6 +250,22 @@ class SenderTests(unittest.TestCase):
         finally:
             importlib.reload(serial_output)
 
+    def test_empty_push_does_not_wipe_good_state(self):
+        # збійний цикл (0 карток) не має стирати живий кадр і вдавати
+        # ферму без принтерів
+        disp = SerialDisplay("COMX", heartbeat=0.02)
+        disp.push([_p("printing", 42)])
+        good = disp._last_frame
+        disp.push([])
+        self.assertEqual(disp._last_frame, good)
+        disp.push(None)
+        self.assertEqual(disp._last_frame, good)
+
+    def test_empty_push_before_any_data_stays_silent(self):
+        disp = SerialDisplay("COMX", heartbeat=0.02)
+        disp.push([])
+        self.assertIsNone(disp._frame_to_send())
+
     def test_chain_push_is_idempotent(self):
         # attach() кличеться при кожному збереженні налаштувань і рестарті бота;
         # без цього кожен виклик намотував ще один шар і кадр будувався N разів
