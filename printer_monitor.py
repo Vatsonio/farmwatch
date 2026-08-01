@@ -32,6 +32,15 @@ logger = logging.getLogger(__name__)
 # Шлях до Bambu Farm Manager Client
 BAMBU_EXE_PATH = r"C:\Program Files\Bambu Farm Manager Client\Bambu Farm Manager Client.exe"
 
+# Заголовок нашого dashboard-вікна: лише дружня підпис для користувача. Це НЕ
+# ознака власності: роутер клієнта перемальовує document.title назад на
+# "index.html#/monitor", тож шукати своє вікно тільки за ним не можна.
+DASHBOARD_TITLE = "Farm monitor (farmwatch)"
+# Стійка мітка власності: window.name переживає навігацію SPA і його ніхто, крім
+# нас, не ставить. Плюс window.open з іменем ПЕРЕВИКОРИСТОВУЄ вікно з таким
+# іменем, тож дублікати не плодяться навіть при повторних викликах.
+DASHBOARD_WINDOW_NAME = "farmwatch_monitor"
+
 # Mapping the farm server's devices2 JSON fields to farmwatch's vocabulary.
 # gcode_state -> our status (the client reports the print state precisely here).
 _GCODE_STATE = {
@@ -147,6 +156,11 @@ class BambuPrinterMonitor:
         self._devices2_misses = 0                    # скільки циклів поспіль без devices2
         self._last_dashboard_reload = 0.0            # monotonic час останнього reload
         self._connected_to_monitor = False           # WS саме до #/monitor-вікна
+        self._dashboard_target_id = None             # CDP-таргет НАШОГО вікна (щоб закрити своє)
+        # Переривчастий сон циклу: stop() має спрацьовувати миттєво, а не чекати
+        # цілий update_interval. Інакше join() відвалюється по таймауту, старий
+        # потік лишається живим і конкурує з новим монітором за CDP і COM порт.
+        self._stop_event = threading.Event()
         self.running = False
         self.ws_connection: Optional[websocket.WebSocket] = None
         self.monitor_thread: Optional[threading.Thread] = None
@@ -242,9 +256,12 @@ class BambuPrinterMonitor:
                 stderr=subprocess.DEVNULL
             )
             
-            # Чекаємо поки додаток запуститься
+            # Чекаємо поки додаток запуститься (переривається зупинкою монітора,
+            # щоб stop() не висів до 30с на запуску клієнта)
             for i in range(30):  # Максимум 30 секунд
-                time.sleep(1)
+                if self._stop_event.wait(1):
+                    logger.info("Запуск перервано зупинкою монітора")
+                    return False
                 if self.is_app_running():
                     logger.info("✓ Додаток успішно запущено")
                     return True
@@ -258,10 +275,94 @@ class BambuPrinterMonitor:
             logger.error(f"❌ Помилка запуску додатку: {e}")
             return False
     
+    def _ensure_client_ready(self) -> bool:
+        """Клієнт має відповідати на debug-порту; інакше підняти його заново.
+
+        Ключовий нюанс Electron: якщо клієнт уже запущений БЕЗ debug-порту, то
+        повторний запуск з --remote-debugging-port нічого не дасть (single instance
+        передасть керування першому інстансу і порт не відкриється). Тому спершу
+        закриваємо наявний процес. Ця перевірка потрібна і при старті, і при
+        кожному перепідключенні, інакше монітор вічно крутить невдалі спроби.
+        """
+        if self.is_app_running():
+            return True
+        if not self.auto_launch:
+            logger.error(
+                "❌ Bambu Farm Manager не доступний на debug-порту. Закрийте клієнт "
+                "і ввімкніть auto_launch, або запустіть його вручну з --remote-debugging-port."
+            )
+            return False
+        if self._is_process_running():
+            logger.info("Клієнт запущений без debug-порту — перезапускаю...")
+            self._terminate_running_app()
+            time.sleep(2)
+        logger.info("Запуск Bambu Farm Manager Client з debug-портом...")
+        return self.launch_app()
+
     @staticmethod
     def _usable_page(p) -> bool:
         return (p.get("type") == "page" and "webSocketDebuggerUrl" in p
                 and not p.get("url", "").startswith("devtools://"))
+
+    def _close_target(self, target_id: str) -> bool:
+        """Закрити вкладку/вікно клієнта через CDP HTTP endpoint."""
+        try:
+            r = requests.get(f"http://127.0.0.1:{self.debug_port}/json/close/{target_id}",
+                             timeout=5)
+            return r.status_code == 200
+        except Exception as e:
+            logger.debug(f"Не вдалось закрити таргет {target_id}: {e}")
+            return False
+
+    @staticmethod
+    def _eval_value(msg):
+        """Витягти значення з відповіді Runtime.evaluate (None якщо не вийшло)."""
+        try:
+            return msg["result"]["result"]["value"]
+        except (TypeError, KeyError):
+            return None
+
+    def _is_our_window(self, page) -> bool:
+        """Чи це НАШЕ dashboard-вікно (за міткою window.name).
+
+        Заголовку не довіряємо: SPA клієнта перемальовує document.title назад.
+        window.name переживає навігацію і ставимо його тільки ми, тож так
+        впізнаються і зомбі-вікна від попереднього запуску farmwatch.
+        """
+        if page.get("id") == self._dashboard_target_id:
+            return True
+        try:
+            msg = self._ws_eval(page["webSocketDebuggerUrl"], "window.name", timeout=4.0)
+        except Exception:
+            return False
+        return self._eval_value(msg) == DASHBOARD_WINDOW_NAME
+
+    def _our_monitor_targets(self, pages=None) -> list:
+        """Наші dashboard-вікна (своє поточне + зомбі від попередніх запусків)."""
+        try:
+            pages = pages if pages is not None else self._list_pages()
+        except Exception:
+            return []
+        out = []
+        for p in pages:
+            if not self._usable_page(p):
+                continue
+            if not p.get("url", "").lower().endswith("#/monitor"):
+                continue  # чужі роути (#/printers, #/tasks) не чіпаємо взагалі
+            if self._is_our_window(p):
+                out.append(p)
+        return out
+
+    def _close_our_dashboard_windows(self, keep_id: Optional[str] = None):
+        """Закрити наші dashboard-вікна (окрім keep_id). Прибирає дублікати і зомбі."""
+        for p in self._our_monitor_targets():
+            tid = p.get("id")
+            if not tid or tid == keep_id:
+                continue
+            if self._close_target(tid):
+                logger.info("✓ Закрито власне dashboard-вікно")
+            if tid == self._dashboard_target_id:
+                self._dashboard_target_id = None
 
     def _list_pages(self):
         return requests.get(f"http://127.0.0.1:{self.debug_port}/json", timeout=10).json()
@@ -290,9 +391,9 @@ class BambuPrinterMonitor:
     def get_dashboard_page(self) -> Optional[dict]:
         """Знайти або ВІДКРИТИ окреме dashboard-вікно (#/monitor), не чіпаючи головне.
 
-        Оновлений клієнт має лише одне вікно. Раніше фолбек перемикав його хеш на
-        #/monitor і тим захоплював головне вікно користувача. Тепер натомість
-        відкриваємо НОВЕ вікно на #/monitor через window.open і згортаємо його.
+        Пріоритет: власне вікно (мітка window.name) → відкрити своє → вікно
+        користувача лише для читання → головне вікно. Головне вікно ніколи не
+        перемикаємо на #/monitor, щоб не захоплювати робоче вікно користувача.
         """
         try:
             pages = self._list_pages()
@@ -300,13 +401,29 @@ class BambuPrinterMonitor:
             for p in pages:
                 logger.info(f"  • {p.get('title', 'No title')} | {p.get('url', '')[:70]}")
 
-            # 1) вже є окреме #/monitor-вікно — використовуємо його.
-            # Наше (титуловане) вікно у пріоритеті: користувач міг відкрити свій
-            # dashboard поруч, його вікно не чіпаємо, якщо є наше.
             monitors = [p for p in pages if self._usable_page(p)
                         and p.get("url", "").lower().endswith("#/monitor")]
-            monitors.sort(key=lambda p: 0 if p.get("title") == "Farm monitor (farmwatch)" else 1)
             if monitors:
+                ours = [p for p in monitors if self._is_our_window(p)]
+                if ours:
+                    chosen = ours[0]
+                    self._dashboard_target_id = chosen.get("id")
+                    logger.info("✓ Використовую власне dashboard-вікно (#/monitor)")
+                    for p in ours[1:]:  # прибрати свої зайві від попередніх запусків
+                        if self._close_target(p.get("id")):
+                            logger.info("✓ Закрито зайве власне dashboard-вікно")
+                    return chosen
+                # Свого нема: спробувати відкрити власне, щоб не залежати від вікна
+                # користувача (він може його закрити або перемкнути роут).
+                main = next((p for p in pages if self._usable_page(p)
+                             and not p.get("url", "").lower().endswith("#/monitor")), None)
+                if main is not None:
+                    new_page = self._open_monitor_window(main)
+                    if new_page is not None:
+                        return new_page
+                # Не вийшло: читаємо чуже вікно, але НЕ вважаємо його своїм
+                # (інакше закрили б користувачу його ж dashboard при зупинці).
+                self._dashboard_target_id = None
                 logger.info("✓ Використовую наявне dashboard-вікно (#/monitor)")
                 return monitors[0]
 
@@ -332,19 +449,47 @@ class BambuPrinterMonitor:
             if not base:
                 return None
             url = base + "#/monitor"
+            known = {p.get("id") for p in self._list_pages()}
+            # іменований таргет: повторний window.open з тим самим імʼям
+            # перевикористовує вікно замість плодити нові
             self._ws_eval(main_page["webSocketDebuggerUrl"],
-                          f"window.open({json.dumps(url)}, '_blank')")
+                          f"window.open({json.dumps(url)}, "
+                          f"{json.dumps(DASHBOARD_WINDOW_NAME)})")
             for _ in range(24):  # до ~12с чекаємо появи нового таргета
                 time.sleep(0.5)
                 for p in self._list_pages():
-                    if self._usable_page(p) and p.get("url", "").lower().endswith("#/monitor"):
+                    if (self._usable_page(p) and p.get("id") not in known
+                            and p.get("url", "").lower().endswith("#/monitor")):
                         logger.info("✓ Відкрито окреме dashboard-вікно (#/monitor)")
+                        self._dashboard_target_id = p.get("id")  # памʼятаємо СВОЄ вікно
+                        self._mark_own_window(p)
                         self._minimize_dashboard_window(p)
                         return p
+            # Нового таргета нема: найімовірніше window.open перевикористав наше
+            # вже існуюче вікно (іменований таргет). Знайдемо його за міткою.
+            for p in self._list_pages():
+                if (self._usable_page(p) and p.get("url", "").lower().endswith("#/monitor")
+                        and self._is_our_window(p)):
+                    logger.info("✓ window.open перевикористав наше dashboard-вікно")
+                    self._dashboard_target_id = p.get("id")
+                    return p
             return None
         except Exception as e:
             logger.warning(f"Не вдалось відкрити #/monitor-вікно: {e}")
             return None
+
+    def _mark_own_window(self, page: dict):
+        """Поставити стійку мітку власності на наше вікно (window.name).
+
+        Electron міг проігнорувати імʼя у window.open, тож ставимо явно: саме за
+        цією міткою вікно впізнається пізніше, навіть коли роутер клієнта
+        перепише document.title.
+        """
+        try:
+            self._ws_eval(page["webSocketDebuggerUrl"],
+                          f"window.name={json.dumps(DASHBOARD_WINDOW_NAME)}")
+        except Exception as e:
+            logger.debug(f"Не вдалось позначити власне вікно: {e}")
 
     def _minimize_dashboard_window(self, page: dict):
         """Згорнути dashboard-вікно (Windows): унікальний заголовок -> знайти hwnd -> ShowWindow."""
@@ -362,7 +507,8 @@ class BambuPrinterMonitor:
             else:
                 logger.debug("Вікно dashboard за заголовком не знайдено")
             # прибрати технічний тег, лишити дружній заголовок
-            self._ws_eval(page["webSocketDebuggerUrl"], "document.title='Farm monitor (farmwatch)'")
+            self._ws_eval(page["webSocketDebuggerUrl"],
+                          f"document.title={json.dumps(DASHBOARD_TITLE)}")
         except Exception as e:
             logger.debug(f"Не вдалось згорнути dashboard-вікно: {e}")
 
@@ -390,7 +536,8 @@ class BambuPrinterMonitor:
         try:
             # Чекаємо завантаження контенту (як в export_dashboard)
             logger.info("Чекаємо завантаження контенту...")
-            time.sleep(5)
+            if self._stop_event.wait(5):
+                return False
             
             # Скролимо сторінку для lazy-loaded контенту
             try:
@@ -448,7 +595,7 @@ class BambuPrinterMonitor:
                 # на index.html і вікно важче впізнати)
                 try:
                     self._send_command(8, "Runtime.evaluate", {
-                        "expression": "document.title='Farm monitor (farmwatch)'",
+                        "expression": f"document.title={json.dumps(DASHBOARD_TITLE)}",
                         "awaitPromise": False})
                 except Exception:
                     pass
@@ -489,7 +636,7 @@ class BambuPrinterMonitor:
             self._send_command(130, "Page.reload", {"ignoreCache": False})
             time.sleep(6)  # дати сторінці піднятись до наступних команд
             self._send_command(131, "Runtime.evaluate", {
-                "expression": "document.title='Farm monitor (farmwatch)'",
+                "expression": f"document.title={json.dumps(DASHBOARD_TITLE)}",
                 "awaitPromise": False})
             self._ensure_dashboard()
         except Exception as e:
@@ -1323,6 +1470,8 @@ class BambuPrinterMonitor:
         Закриває старе зʼєднання, за потреби (і якщо auto_launch) перезапускає
         клієнт, і піднімає websocket наново. Повертає True при успіху.
         """
+        if not self.running:
+            return False  # зупиняємось: не воскрешати зʼєднання і не піднімати клієнт
         try:
             if self.ws_connection:
                 try:
@@ -1331,14 +1480,8 @@ class BambuPrinterMonitor:
                     pass
                 self.ws_connection = None
 
-            if not self.is_app_running():
-                if self.auto_launch:
-                    logger.info("Клієнт недоступний на debug-порту — перезапускаю")
-                    if not self.launch_app():
-                        return False
-                else:
-                    logger.warning("Клієнт недоступний на debug-порту і auto_launch вимкнено")
-                    return False
+            if not self._ensure_client_ready():
+                return False
 
             if self.connect_websocket():
                 logger.info("✓ CDP перепідключено")
@@ -1364,70 +1507,97 @@ class BambuPrinterMonitor:
                         logger.warning("Кілька невдалих оновлень поспіль — перепідключаю CDP")
                         if self._reconnect():
                             failures = 0
-                time.sleep(self.update_interval)
+                # переривчастий сон: stop() будить одразу, не чекаючи весь інтервал
+                self._stop_event.wait(self.update_interval)
             except Exception as e:
                 logger.error(f"Помилка у циклі моніторингу: {e}")
                 failures += 1
                 if failures >= 2 and self._reconnect():
                     failures = 0
-                time.sleep(5)  # Чекаємо перед повторною спробою
+                self._stop_event.wait(5)  # Чекаємо перед повторною спробою
+        logger.info("Цикл моніторингу завершено")
     
     def start(self) -> bool:
         """Запуск моніторингу"""
         if self.running:
             logger.warning("Моніторинг вже запущений")
             return False
-        
-        # Перевіряємо чи доступний клієнт на debug-порту
-        if self.is_app_running():
-            logger.info("✓ Bambu Farm Manager вже запущений з debug-портом")
-        else:
-            # debug-порт не відповідає. Можливо, клієнт запущений у звичайному режимі —
-            # тоді повторний запуск з --remote-debugging-port нічого не дасть (Electron
-            # передасть керування першому інстансу), тому спершу закриваємо існуючий.
-            if self.auto_launch:
-                if self._is_process_running():
-                    logger.info("Клієнт запущений без debug-порту — перезапускаю...")
-                    self._terminate_running_app()
-                    time.sleep(2)
-                logger.info("Запуск Bambu Farm Manager Client з debug-портом...")
-                if not self.launch_app():
-                    return False
-            else:
-                logger.error(
-                    "❌ Bambu Farm Manager не доступний на debug-порту. Закрийте клієнт "
-                    "і ввімкніть auto_launch, або запустіть його вручну з --remote-debugging-port."
-                )
+
+        # Хвіст попереднього запуску: дочекатись, щоб два цикли не працювали разом
+        old = self.monitor_thread
+        if old is not None and old.is_alive():
+            logger.info("Чекаю завершення попереднього циклу моніторингу...")
+            self._stop_event.set()
+            old.join(timeout=15)
+            if old.is_alive():
+                logger.warning("Попередній цикл ще живий — не стартую другий")
                 return False
-        
+        self._stop_event.clear()
+
+        if not self._ensure_client_ready():
+            return False
+
         if not self.connect_websocket():
             return False
-        
+
         self.running = True
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
-        
+
         logger.info("✓ Моніторинг успішно запущено")
         return True
     
     def stop(self, close_app: bool = False):
-        """Зупинка моніторингу
-        
+        """Зупинка моніторингу: прибирає ВСЕ, що створив цей монітор.
+
+        Дисплей, потік циклу, websocket і власне dashboard-вікно. Інакше після
+        стоп/старт лишалися живий SerialDisplay на тому ж COM порту (два потоки
+        билися за ESP) і зайві вікна клієнта, тож рестарт лише погіршував стан.
+
         Args:
             close_app: Закрити Bambu Farm Manager Client після зупинки
         """
         logger.info("Зупинка моніторингу...")
         self.running = False
-        
+        self._stop_event.set()
+
+        # 0) розбудити потік, якщо він завис на recv() (інакше join чекав би
+        # таймаут websocket). running=False уже виставлено, тож цикл вийде,
+        # а _reconnect під час зупинки не спрацює.
         if self.ws_connection:
             try:
                 self.ws_connection.close()
-            except:
+            except Exception:
                 pass
-        
+
+        # 1) дисплей: звільнити COM порт до того, як його займе новий монітор
+        disp = getattr(self, "_serial_display", None)
+        if disp is not None:
+            try:
+                disp.stop()
+            except Exception as e:
+                logger.debug(f"Дисплей не зупинився: {e}")
+            self._serial_display = None
+
+        # 2) потік циклу (сон переривається через _stop_event, тож це швидко)
         if self.monitor_thread:
-            self.monitor_thread.join(timeout=5)
-        
+            self.monitor_thread.join(timeout=15)
+            if self.monitor_thread.is_alive():
+                logger.warning("Потік моніторингу не завершився за 15с")
+
+        # 3) наше dashboard-вікно, щоб вікна не накопичувались між запусками
+        try:
+            self._close_our_dashboard_windows()
+        except Exception as e:
+            logger.debug(f"Не вдалось прибрати dashboard-вікна: {e}")
+
+        if self.ws_connection:
+            try:
+                self.ws_connection.close()
+            except Exception:
+                pass
+            self.ws_connection = None
+
         if close_app and self.app_process:
             try:
                 logger.info("Закриваємо Bambu Farm Manager Client...")
