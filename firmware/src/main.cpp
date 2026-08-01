@@ -31,17 +31,25 @@ static const uint8_t MAX_PRINTERS = 8;
 static const uint32_t LINK_TIMEOUT_MS = 6000;
 // Довгий NO LINK: USB CDC після сну ПК або ре-енумерації інколи зависає так,
 // що кадри вже не доходять. М'який рестарт переініціалізовує USB Serial/JTAG,
-// ефект як перетикання кабелю. Поки farmwatch вимкнений, рестарт раз на 5 хв
-// непомітний: дисплей за мить знову показує NO LINK.
+// ефект як перетикання кабелю. Перезавантажуємось РІВНО ОДИН раз на втрату
+// звʼязку (умова haveFirst): після рестарту звʼязку ще не було, тож поки
+// farmwatch просто вимкнений, плата спокійно показує NO LINK і не крутить
+// вічний цикл перезавантажень.
 static const uint32_t NO_LINK_REBOOT_MS = 5UL * 60UL * 1000UL;
 
 struct Printer { char st; uint8_t progress; };
 Printer cur[MAX_PRINTERS];
-char prevSt[MAX_PRINTERS];
 char pname[MAX_PRINTERS][17];   // назва принтера (порожньо = показувати номер)
 uint8_t printerCount = 0;
 bool haveFirst = false;
 uint32_t lastFrameMs = 0;
+
+// Попередній стан для подій. Тримаємо і назви: склад списку змінюється
+// (принтер зник, додався, змінився порядок), і порівняння по позиції давало
+// фальшиві DONE/ERR на сусідніх принтерах.
+char prevSt[MAX_PRINTERS];
+char prevName[MAX_PRINTERS][17];
+uint8_t prevCount = 0;
 
 // --- екрани і події ---
 uint8_t screen = 0;                 // 0 = зведення, 1 = деталі
@@ -100,12 +108,21 @@ void applyFrame() {
     p = comma + 1;
   }
 
-  // події: перехід у готово / стоп
+  // події: перехід у готово / стоп. Шукаємо той самий принтер за назвою,
+  // а без назв (labels=numbers) лишається порівняння по позиції.
   if (haveFirst) {
     for (int i = 0; i < n; i++) {
-      if (prevSt[i] != parsed[i].st) {
-        if (parsed[i].st == 'd' && prevSt[i] == 'p') enqueueOverlay(1, i);
-        else if (parsed[i].st == 'e' && prevSt[i] != 'e') enqueueOverlay(2, i);
+      int j = -1;
+      if (pn[i][0]) {
+        for (int k = 0; k < prevCount; k++)
+          if (strcmp(prevName[k], pn[i]) == 0) { j = k; break; }
+      } else if (i < prevCount) {
+        j = i;
+      }
+      if (j < 0) continue;   // новий принтер: подію не вигадуємо
+      if (prevSt[j] != parsed[i].st) {
+        if (parsed[i].st == 'd' && prevSt[j] == 'p') enqueueOverlay(1, i);
+        else if (parsed[i].st == 'e' && prevSt[j] != 'e') enqueueOverlay(2, i);
       }
     }
   }
@@ -113,10 +130,13 @@ void applyFrame() {
   printerCount = n;
   for (int i = 0; i < n; i++) {
     cur[i] = parsed[i];
-    prevSt[i] = parsed[i].st;
     strncpy(pname[i], pn[i], sizeof(pname[i]));
     pname[i][sizeof(pname[i]) - 1] = '\0';
+    prevSt[i] = parsed[i].st;
+    strncpy(prevName[i], pn[i], sizeof(prevName[i]));
+    prevName[i][sizeof(prevName[i]) - 1] = '\0';
   }
+  prevCount = n;
   haveFirst = true;
   lastFrameMs = millis();
 }
@@ -220,7 +240,10 @@ void setup() {
   P.setInvert(false);
   P.displayClear();
 
-  for (int i = 0; i < MAX_PRINTERS; i++) { prevSt[i] = 0; cur[i].st = 'i'; cur[i].progress = 0; pname[i][0] = '\0'; }
+  for (int i = 0; i < MAX_PRINTERS; i++) {
+    prevSt[i] = 0; prevName[i][0] = '\0';
+    cur[i].st = 'i'; cur[i].progress = 0; pname[i][0] = '\0';
+  }
   lastFrameMs = millis() - LINK_TIMEOUT_MS;  // старт у стані "нема звʼязку"
 
   loadScreen();  // почне з NO LINK, поки нема даних
@@ -229,7 +252,7 @@ void setup() {
 void loop() {
   readSerial();
 
-  if ((millis() - lastFrameMs) > NO_LINK_REBOOT_MS) ESP.restart();
+  if (haveFirst && (millis() - lastFrameMs) > NO_LINK_REBOOT_MS) ESP.restart();
 
   // подія перебиває поточний екран одразу
   if (!evtActive && ovHead != ovTail) {
